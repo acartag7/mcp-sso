@@ -349,6 +349,33 @@ test("lock release refuses to remove a replacement with another nonce", () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
+test("stale lock recovery rechecks the exact record before unlinking", () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-lock-stale-"));
+  const path = join(root, "session.lock");
+  const originalKill = process.kill;
+  try {
+    chmodSync(root, 0o700);
+    writeFileSync(path, `${JSON.stringify({
+      version: 1, pid: 2_147_483_647, nonce: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    })}\n`, { mode: 0o600 });
+    let calls = 0;
+    process.kill = (pid, signal) => {
+      calls += 1;
+      if (calls === 1) writeFileSync(path, `${JSON.stringify({
+        version: 1, pid: process.pid, nonce: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      })}\n`);
+      return originalKill.call(process, pid, signal);
+    };
+    assert.throws(() => acquireSessionLock(path), /stale live-session lock changed/);
+    const replacement = JSON.parse(readFileSync(path, "utf8"));
+    assert.equal(replacement.pid, process.pid);
+    assert.equal(replacement.nonce, "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
+  } finally {
+    process.kill = originalKill;
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("session rejects unknown and repeated legs before any side effect", () => {
   for (const args of [["serve", "other"], ["serve", "google", "google"]]) {
     const f = fixture();
@@ -484,17 +511,50 @@ test("watch rejects unknown and repeated options", () => {
   }
 });
 
-test("watch rejects starting state and session records with unknown fields", () => {
+test("watch rejects starting state, empty legs, and session records with unknown fields", () => {
   const f = fixture();
   try {
     assert.equal(run(f, ["serve", "google"]).status, 0);
     const path = join(f.repo, ".live-state/session.json");
     const state = JSON.parse(readFileSync(path, "utf8"));
-    for (const invalid of [{ ...state, status: "starting" }, { ...state, extra: true }]) {
+    for (const invalid of [{ ...state, status: "starting" }, { ...state, legs: [] }, { ...state, extra: true }]) {
       writeFileSync(path, `${JSON.stringify(invalid)}\n`);
       assert.equal(run(f, ["watch", "--once"]).status, 1);
     }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("continuous watch stops before attributing a replacement session", async () => {
+  const f = fixture();
+  let child;
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(join(leg, "audit.jsonl"), `${audit("https://claude.ai/oauth-client").map(JSON.stringify).join("\n")}\n`);
+    child = spawn(process.execPath, [join(f.repo, "session.mjs"), "watch"], {
+      cwd: f.repo, env: f.env, stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    await new Promise((resolve) => { setTimeout(resolve, 1_200); });
+    assert.equal(run(f, ["serve", "entra"]).status, 0);
+    const status = await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("watch did not stop after session replacement")), 5_000);
+      child.once("error", reject);
+      child.once("exit", (code) => { clearTimeout(timer); resolve(code); });
+    });
+    assert.equal(status, 1);
+    assert.match(stderr, /live session changed while watch was running/);
+    assert.equal(existsSync(join(f.repo, ".live-state/session-results.jsonl")), false);
+  } finally {
+    if (child?.exitCode === null) {
+      child.kill("SIGKILL");
+      await new Promise((resolve) => { child.once("exit", resolve); });
+    }
+    rmSync(f.root, { recursive: true, force: true });
+  }
 });
 
 test("watch rejects state that is hard-linked, permission-widened, wrongly owned, or under a replaced directory", () => {

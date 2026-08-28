@@ -323,6 +323,8 @@ const validLock = (value) => isPlainObject(value)
   && Object.keys(value).sort().join("\0") === "nonce\0pid\0version"
   && value.version === 1 && Number.isSafeInteger(value.pid) && value.pid > 0
   && typeof value.nonce === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.nonce);
+const sameLock = (left, right) => validLock(left) && validLock(right)
+  && left.version === right.version && left.pid === right.pid && left.nonce === right.nonce;
 
 function processIsAlive(pid) {
   try { process.kill(pid, 0); return true; } catch (error) {
@@ -348,6 +350,9 @@ export function acquireSessionLock(path, pid = process.pid) {
       const current = readPrivateJson(path);
       if (!validLock(current)) throw new Error("live-session lock is invalid");
       if (processIsAlive(current.pid)) throw new Error("another live session is active");
+      const confirmed = readPrivateJson(path);
+      if (!sameLock(current, confirmed)) throw new Error("stale live-session lock changed");
+      if (processIsAlive(confirmed.pid)) throw new Error("another live session is active");
       try { unlinkSync(path); } catch { throw new Error("stale live-session lock cannot be removed"); }
       continue;
     }

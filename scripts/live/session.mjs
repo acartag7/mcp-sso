@@ -61,6 +61,7 @@ function validSession(value) {
   const fields = ["clean", "commit", "legs", "mode", "startedAt", "status", "version"];
   if (Object.keys(value).sort().join("\0") !== fields.join("\0")) return undefined;
   let legs;
+  if (!Array.isArray(value.legs) || value.legs.length === 0) return undefined;
   try { legs = validateLegs(value.legs); } catch { return undefined; }
   const started = typeof value.startedAt === "string" ? Date.parse(value.startedAt) : Number.NaN;
   if (value.version !== 1 || value.status !== "ready" || !["stored", "stateless"].includes(value.mode)
@@ -68,6 +69,14 @@ function validSession(value) {
     || typeof value.clean !== "boolean" || Number.isNaN(started)
     || new Date(started).toISOString() !== value.startedAt) return undefined;
   return { legs, mode: value.mode, commit: value.commit, clean: value.clean, startedAt: value.startedAt };
+}
+
+class SessionChangedError extends Error {}
+
+function sameSession(left, right) {
+  return left.commit === right.commit && left.clean === right.clean && left.mode === right.mode
+    && left.startedAt === right.startedAt && left.legs.length === right.legs.length
+    && left.legs.every((leg, index) => leg === right.legs[index]);
 }
 
 function invalidateSession() {
@@ -171,9 +180,19 @@ function clientVersions() {
 }
 
 function readFlows(session) {
+  let current;
+  try { current = validSession(readPrivateJson(SESSION_FILE)); } catch { current = undefined; }
+  if (current === undefined || !sameSession(session, current)) {
+    throw new SessionChangedError("live session changed while watch was running");
+  }
   const startedAt = Date.parse(session.startedAt);
-  return new Map(session.legs.map((leg) => [leg, buildFlows(readAudit(join(STATE_DIR, leg, "audit.jsonl"))
+  const flows = new Map(session.legs.map((leg) => [leg, buildFlows(readAudit(join(STATE_DIR, leg, "audit.jsonl"))
     .filter((event) => Date.parse(event.occurredAt) >= startedAt))]));
+  try { current = validSession(readPrivateJson(SESSION_FILE)); } catch { current = undefined; }
+  if (current === undefined || !sameSession(session, current)) {
+    throw new SessionChangedError("live session changed while watch was running");
+  }
+  return flows;
 }
 
 function printResult(result) {
@@ -211,8 +230,10 @@ async function watch(args) {
   const oneShot = [];
   const scan = (finalize) => {
     let byLeg;
-    try { byLeg = readFlows(session); } catch {
-      process.stderr.write("session.mjs: an audit trail is unreadable\n");
+    try { byLeg = readFlows(session); } catch (error) {
+      process.stderr.write(error instanceof SessionChangedError
+        ? "session.mjs: live session changed while watch was running\n"
+        : "session.mjs: an audit trail is unreadable\n");
       failed = true;
       return;
     }
