@@ -29,6 +29,7 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a receipt names no valid run time | New here: a campaign is identified by its commit and `ranAt`, so an absent or impossible one cannot be told from another run's. Pinned in `test/release-gate-conditions.test.mjs` |
+| a receipt names a day that does not exist | New here: parsing normalizes `2026-02-31` onto March, so shape plus `Date.parse` accepted it. Proven by the `toISOString` round trip instead. Pinned in `test/release-gate-conditions.test.mjs` |
 | a receipt names an impossible recording time | New here, the other half: `recordedAt` is the chronology the receipt asserts about itself. Pinned in `test/release-gate-conditions.test.mjs` |
 | a machine-checked row claims to be hand-driven | New here, the mirror of the row below: the recorder refuses a `--row` naming a rehearsal id, so the gate refuses the same claim in a stored receipt. Pinned in `test/release-gate-conditions.test.mjs` |
 | a hand-driven row is not marked as one | New here: a row only a person can drive carries `driven: true`, so a person's word cannot sit in the receipt looking like a probe result. Pinned in `test/release-gate-conditions.test.mjs` |

@@ -76,6 +76,9 @@ const CONDITIONS = [
   ["a receipt names an impossible recording time",
     () => ({ receipts: receipts(receiptFor(ancestor, { recordedAt: "2026-13-45T99:99:99Z" })) }),
     "recordedAt is not an instant"],
+  ["a receipt names a day that does not exist",
+    () => ({ receipts: receipts(receiptFor(ancestor, { ranAt: "2026-02-31T12:00:00.000Z" })) }),
+    "ranAt is not an instant"],
   ["a machine-checked row claims to be hand-driven",
     () => ({ receipts: receipts(receiptFor(ancestor, {
       rows: receiptFor(ancestor).rows.map((row) => (row.id === "probe-google" ? { ...row, driven: true } : row)),
@@ -107,7 +110,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 26, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 27, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages as it did, plus the correction that lets one pull request carry both", () => {

@@ -214,8 +214,12 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   // A campaign is identified by its commit and ranAt, so a receipt naming no
   // valid run time cannot be told from another run's, and the archive cannot
   // name it. undefined is the dangerous one: JSON.stringify drops the field.
+  // A day that does not exist and an hour that does not exist both parse
+  // finite, because parsing normalizes them onto another instant. A campaign is
+  // identified by this value, so it has to mean exactly one moment.
   for (const bad of [{ startedAt: undefined, finishedAt: undefined }, { finishedAt: "yesterday" },
-    { finishedAt: "2026-13-45T99:99:99Z" }]) {
+    { finishedAt: "2026-13-45T99:99:99Z" }, { finishedAt: "2026-02-31T12:00:00.000Z" },
+    { finishedAt: "2026-08-28T24:00:00.000Z" }, { finishedAt: "2026-08-28T10:15:00Z" }]) {
     assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor(bad)), { driven: [...DRIVEN_ROWS] }),
       /names no valid run time/, `${JSON.stringify(bad)} is not a run time`);
   }

@@ -28,13 +28,27 @@ const cli = (id, leg, which, serve) => ({ id, kind: "client", entry: CLI, leg, e
  *  of them, and the release gate requires all of them present and passing. A
  *  row outside this set is not a checklist row, so recording one is refused
  *  rather than counted. */
-/** An instant, in the one spelling `toISOString` produces. A campaign is
- *  identified by its commit and `ranAt`, so a receipt whose timestamps are
- *  absent, malformed, or impossible cannot be told from another run's. Both the
- *  recorder and the gate use this, from here, so the two cannot drift. */
-const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
-export const isTimestamp = (value) =>
-  typeof value === "string" && TIMESTAMP.test(value) && Number.isFinite(Date.parse(value));
+/** An instant, in the exact spelling `toISOString` produces, proven by the
+ *  round trip rather than by shape. A regex plus `Date.parse` is not enough:
+ *  `2026-02-31T12:00:00Z` and `24:00:00` are regex-shaped and parse finite,
+ *  because parsing normalizes them onto another calendar instant, so a receipt
+ *  could name a day that does not exist and still be accepted. A campaign is
+ *  identified by its commit and `ranAt`, so that value has to mean exactly one
+ *  moment. Both the recorder and the gate use this, from here, so the two
+ *  cannot drift.
+ *
+ *  The comparison also fixes the spelling: the millisecond-less form is
+ *  refused, which is fine because every timestamp the harness writes comes from
+ *  `toISOString` itself. */
+export const isTimestamp = (value) => {
+  if (typeof value !== "string") return false;
+  try {
+    return new Date(value).toISOString() === value;
+  } catch {
+    // An unparseable string makes an Invalid Date, whose toISOString throws.
+    return false;
+  }
+};
 
 export const DRIVEN_ROWS = Object.freeze(["A3", "B3", "C1", "C2", "F1", "F2", "F3"]);
 
