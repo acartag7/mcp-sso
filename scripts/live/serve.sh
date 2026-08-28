@@ -19,6 +19,11 @@ set +xv
 
 fail() { echo "serve.sh: $1" >&2; exit 1; }
 
+SESSION_READY_FD="${MCP_SSO_SESSION_READY_FD:-}"
+if [[ -n "$SESSION_READY_FD" && "$SESSION_READY_FD" != "3" ]]; then
+  fail "MCP_SSO_SESSION_READY_FD must be 3 when set"
+fi
+
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SUPPORT="$REPO/scripts/live/run-support.mjs"
 INFRA="${MCP_SSO_INFRA_DIR:?set MCP_SSO_INFRA_DIR to the private infrastructure checkout}"
@@ -153,7 +158,8 @@ echo
 # the child — as the listener. A stale process on the port would otherwise be
 # exposed as the build under test.
 for i in "${!LEGS[@]}"; do
-  PORT="${GATEWAY_PORTS[$i]}" "$REPO/scripts/live/run.sh" examples/fastify-sqlite/index.ts "${LEGS[$i]}" &
+  env -u MCP_SSO_SESSION_READY_FD PORT="${GATEWAY_PORTS[$i]}" \
+    "$REPO/scripts/live/run.sh" examples/fastify-sqlite/index.ts "${LEGS[$i]}" 3>&- &
   SERVER_PIDS+=("$!")
 done
 for i in "${!LEGS[@]}"; do
@@ -209,9 +215,10 @@ done
 # the vendor keys are removed from its environment. It still runs as this
 # user, so their 0600 modes remain the boundary for the files themselves;
 # docs/reference/live-harness.md records what that does and does not buy.
-env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE \
-  cloudflared tunnel --config "$CONF" run "$TUNNEL" &
+env -u MCP_SSO_BUNDLE_DIR -u MCP_SSO_GOOGLE_ENV -u MCP_SSO_CLIENT_KEYS_FILE -u MCP_SSO_SESSION_READY_FD \
+  cloudflared tunnel --config "$CONF" run "$TUNNEL" 3>&- &
 TUNNEL_PID=$!
+SESSION_READY=false
 while kill -0 "$TUNNEL_PID" 2>/dev/null; do
   # Interval first: the gate above proved every leg a moment ago, so the next
   # meaningful check is one interval later.
@@ -231,6 +238,11 @@ while kill -0 "$TUNNEL_PID" 2>/dev/null; do
       exit 1
     fi
   done
+  if [[ "$SESSION_READY" == false && "$SESSION_READY_FD" == "3" ]]; then
+    printf 'ready\n' >&3 || fail "cannot notify the session wrapper that serving is ready"
+    exec 3>&-
+    SESSION_READY=true
+  fi
 done
 wait "$TUNNEL_PID"
 status=$?

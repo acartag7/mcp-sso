@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { readAudit, writeResults } from "../scripts/live/session-support.mjs";
+import { classifyClient, readAudit, writeResults } from "../scripts/live/session-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const executable = (path, body) => { writeFileSync(path, body); chmodSync(path, 0o700); };
@@ -23,6 +23,14 @@ function fixture() {
   for (const file of ["session.mjs", "session-support.mjs"]) copyFileSync(join(ROOT, "scripts/live", file), join(live, file));
   executable(join(live, "serve.sh"), `#!/usr/bin/env bash
 printf '%s\n' "$*" >> "$SERVE_LOG"
+if [[ "\${FAKE_SERVE_STATUS:-0}" == "0" && "\${MCP_SSO_SESSION_READY_FD-}" == "3" ]]; then
+  case "\${FAKE_READY_MARKER-}" in
+    bad) printf 'not-ready\n' >&3 ;;
+    none) : ;;
+    *) printf 'ready\n' >&3 ;;
+  esac
+  exec 3>&-
+fi
 if [[ "\${FAKE_SERVE_WAIT-}" == "true" ]]; then
   trap 'exit 130' INT
   trap 'exit 143' TERM
@@ -96,6 +104,7 @@ test("session serve delegates to serve.sh and cleans only the selected fixed ent
     const state = JSON.parse(readFileSync(join(f.repo, ".live-state/session.json"), "utf8"));
     assert.deepEqual(state.legs, ["google"]);
     assert.equal(state.mode, "stored");
+    assert.equal(state.status, "ready");
     assert.equal(state.clean, true);
     assert.equal(statSync(join(f.repo, ".live-state")).mode & 0o077, 0);
     assert.equal(statSync(join(f.repo, ".live-state/session.json")).mode & 0o077, 0);
@@ -110,6 +119,20 @@ test("session serve preserves a serve failure and still cleans every selected cl
     assert.deepEqual(lines(f.clientLog), [
       "claude mcp remove mcp-sso-live-entra", "codex mcp remove mcp-sso-live-entra",
     ]);
+    assert.equal(existsSync(join(f.repo, ".live-state/session.json")), false);
+    const watch = run(f, ["watch", "--once"]);
+    assert.equal(watch.status, 1);
+    assert.match(watch.stderr, /run session\.mjs serve before watch/);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("session serve rejects a malformed readiness marker and leaves no usable state", () => {
+  const f = fixture();
+  try {
+    const result = run(f, ["serve", "google"], { FAKE_READY_MARKER: "bad" });
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(existsSync(join(f.repo, ".live-state/session.json")), false);
+    assert.equal(run(f, ["watch", "--once"]).status, 1);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -144,6 +167,31 @@ test("session rejects unknown and repeated legs before any side effect", () => {
       assert.equal(existsSync(join(f.repo, ".live-state")), false);
     } finally { rmSync(f.root, { recursive: true, force: true }); }
   }
+});
+
+test("session rejects an invalid DCR mode before any side effect", () => {
+  const f = fixture();
+  try {
+    const result = run(f, ["serve", "google"], { MCP_SSO_DCR_MODE: "other" });
+    assert.equal(result.status, 1);
+    assert.equal(existsSync(f.serveLog), false);
+    assert.equal(existsSync(f.clientLog), false);
+    assert.equal(existsSync(join(f.repo, ".live-state")), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("session refuses a hard-linked state file before truncating its other name", () => {
+  const f = fixture();
+  try {
+    const stateDir = join(f.repo, ".live-state");
+    const original = join(f.root, "original-state");
+    mkdirSync(stateDir, { mode: 0o700 });
+    writeFileSync(original, "keep\n", { mode: 0o600 });
+    linkSync(original, join(stateDir, "session.json"));
+    assert.equal(run(f, ["serve", "google"]).status, 1);
+    assert.equal(readFileSync(original, "utf8"), "keep\n");
+    assert.equal(existsSync(f.serveLog), false);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("explicit cleanup attempts all six fixed targets and continues after failure", () => {
@@ -193,6 +241,66 @@ test("one-shot watch records a token without a protected request as TOKEN_ONLY",
     const saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
     assert.equal(saved.verdict, "TOKEN_ONLY");
     assert.equal(saved.toolCalls, 0);
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Codex DCR attribution is explicit and limited to its generated loopback client id", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    const clientId = `mcpdc_${"a".repeat(32)}`;
+    writeFileSync(join(leg, "audit.jsonl"), `${audit(clientId).map(JSON.stringify).join("\n")}\n`);
+
+    assert.equal(run(f, ["watch", "--all", "--once"]).status, 0);
+    let saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
+    assert.equal(saved.client, "cli-dcr");
+    assert.equal(saved.row, undefined);
+    assert.equal(saved.clientAttribution, undefined);
+
+    assert.equal(run(f, ["watch", "--all", "--once", "--codex-dcr"]).status, 0);
+    saved = JSON.parse(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"));
+    assert.equal(saved.client, "codex");
+    assert.equal(saved.row, "B3");
+    assert.equal(saved.clientVersion, "codex 1.2.3");
+    assert.equal(saved.clientAttribution, "operator-annotated");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("Codex DCR attribution rejects the wrong id shape and non-loopback redirects", () => {
+  const flow = (clientId, redirectHost) => ({
+    clientId,
+    events: [{ event: "oauth.authorize.prepare", status: "success", clientId, redirectHost }],
+  });
+  const generated = `mcpdc_${"b".repeat(32)}`;
+  assert.equal(classifyClient(flow("mcpdc_other", "http://localhost:1455/callback"), [], { codexDcr: true }).kind, "cli-dcr");
+  assert.equal(classifyClient(flow(generated, "https://client.example/callback"), [], { codexDcr: true }).kind, "dcr-hosted");
+  assert.equal(classifyClient(flow(generated, "http://[::1]:1455/callback"), [], { codexDcr: true }).kind, "codex");
+});
+
+test("watch rejects unknown and repeated options", () => {
+  for (const args of [["watch", "--other"], ["watch", "--codex-dcr", "--codex-dcr"]]) {
+    const f = fixture();
+    try {
+      const result = run(f, args);
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /usage: session\.mjs watch/);
+      assert.equal(existsSync(join(f.repo, ".live-state")), false);
+    } finally { rmSync(f.root, { recursive: true, force: true }); }
+  }
+});
+
+test("watch rejects starting state and session records with unknown fields", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const path = join(f.repo, ".live-state/session.json");
+    const state = JSON.parse(readFileSync(path, "utf8"));
+    for (const invalid of [{ ...state, status: "starting" }, { ...state, extra: true }]) {
+      writeFileSync(path, `${JSON.stringify(invalid)}\n`);
+      assert.equal(run(f, ["watch", "--once"]).status, 1);
+    }
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -251,6 +359,30 @@ test("one-shot watch ignores audit events from before the current serve session"
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /saved 0 result/);
     assert.equal(readFileSync(join(f.repo, ".live-state/session-results.jsonl"), "utf8"), "");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
+});
+
+test("an unattributed identity denial does not rewrite the preceding completed flow", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    const events = audit("https://claude.ai/oauth-client");
+    events.push({
+      occurredAt: new Date(Date.parse(events.at(-1).occurredAt) + 1).toISOString(),
+      event: "identity.verify", status: "failure", reason: "identity_rejected",
+    });
+    writeFileSync(join(leg, "audit.jsonl"), `${events.map(JSON.stringify).join("\n")}\n`);
+    const result = run(f, ["watch", "--all", "--once"]);
+    assert.equal(result.status, 0, result.stderr);
+    const saved = lines(join(f.repo, ".live-state/session-results.jsonl")).map(JSON.parse);
+    assert.equal(saved.length, 2);
+    assert.equal(saved[0].verdict, "PASS");
+    assert.equal(saved[0].row, "A3");
+    assert.equal(saved[1].verdict, "DENIED");
+    assert.equal(saved[1].client, "unattributed");
+    assert.equal(saved[1].row, undefined);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 

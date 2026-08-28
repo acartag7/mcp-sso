@@ -3,6 +3,7 @@
 // live server, follows its audit trail, and removes only this helper's fixed MCP
 // entries from Claude Code and Codex.
 import { spawn, spawnSync } from "node:child_process";
+import { unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -56,21 +57,63 @@ function cleanupClients(legs = LEGS) {
 
 function validSession(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const fields = ["clean", "commit", "legs", "mode", "startedAt", "status", "version"];
+  if (Object.keys(value).sort().join("\0") !== fields.join("\0")) return undefined;
   let legs;
   try { legs = validateLegs(value.legs); } catch { return undefined; }
   const started = typeof value.startedAt === "string" ? Date.parse(value.startedAt) : Number.NaN;
-  if (value.version !== 1 || !["stored", "stateless"].includes(value.mode) || !/^[0-9a-f]{40,64}$/.test(value.commit)
+  if (value.version !== 1 || value.status !== "ready" || !["stored", "stateless"].includes(value.mode)
+    || !/^[0-9a-f]{40,64}$/.test(value.commit)
     || typeof value.clean !== "boolean" || Number.isNaN(started)
     || new Date(started).toISOString() !== value.startedAt) return undefined;
   return { legs, mode: value.mode, commit: value.commit, clean: value.clean, startedAt: value.startedAt };
+}
+
+function invalidateSession() {
+  try { unlinkSync(SESSION_FILE); return true; } catch (error) {
+    if (error?.code === "ENOENT") return true;
+    process.stderr.write("session.mjs: failed to invalidate the session state\n");
+    return false;
+  }
 }
 
 async function serve(args) {
   const legs = validateLegs(args);
   const mode = modeFromEnvironment();
   const source = checkout();
-  writePrivateJson(SESSION_FILE, { version: 1, legs, mode, ...source, startedAt: new Date().toISOString() });
-  const child = spawn(join(ROOT, "scripts/live/serve.sh"), legs, { detached: true, stdio: "inherit", env: process.env });
+  const state = { version: 1, status: "starting", legs, mode, ...source, startedAt: new Date().toISOString() };
+  writePrivateJson(SESSION_FILE, state);
+  const child = spawn(join(ROOT, "scripts/live/serve.sh"), legs, {
+    detached: true, stdio: ["inherit", "inherit", "inherit", "pipe"],
+    env: { ...process.env, MCP_SSO_SESSION_READY_FD: "3" },
+  });
+  let ready = false;
+  let readinessFailed = false;
+  let marker = "";
+  const readiness = child.stdio[3];
+  readiness.setEncoding("utf8");
+  readiness.on("data", (chunk) => {
+    marker += chunk;
+    if (Buffer.byteLength(marker) > 16) {
+      readinessFailed = true;
+      try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
+    }
+  });
+  readiness.on("error", () => {
+    readinessFailed = true;
+    try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
+  });
+  readiness.once("end", () => {
+    if (!readinessFailed && marker === "ready\n") {
+      try { writePrivateJson(SESSION_FILE, { ...state, status: "ready" }); ready = true; } catch {
+        readinessFailed = true;
+        try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
+      }
+    } else if (!ready) {
+      readinessFailed = true;
+      try { child.kill("SIGTERM"); } catch { /* the child already stopped */ }
+    }
+  });
   let forwarded;
   const forward = (signal) => {
     if (forwarded === undefined) {
@@ -83,15 +126,16 @@ async function serve(args) {
   process.on("SIGINT", onInt);
   process.on("SIGTERM", onTerm);
   const result = await new Promise((resolve) => {
-    child.once("error", () => resolve({ code: 1, signal: null }));
-    child.once("exit", (code, signal) => resolve({ code, signal }));
+    child.once("error", () => { readinessFailed = true; resolve({ code: 1, signal: null }); });
+    child.once("close", (code, signal) => resolve({ code, signal }));
   });
   process.off("SIGINT", onInt);
   process.off("SIGTERM", onTerm);
+  const stateClean = ready || invalidateSession();
   const clean = cleanupClients(legs);
   if (result.code !== 0) return result.code ?? (result.signal === "SIGINT" ? 130 : 143);
   if (forwarded !== undefined) return forwarded === "SIGINT" ? 130 : 143;
-  return clean ? 0 : 1;
+  return clean && stateClean && !readinessFailed ? 0 : 1;
 }
 
 function clientVersions() {
@@ -117,10 +161,13 @@ function printResult(result) {
 }
 
 async function watch(args) {
-  const allowed = new Set(["--all", "--once"]);
-  if (args.some((arg) => !allowed.has(arg)) || new Set(args).size !== args.length) throw new Error("usage: session.mjs watch [--all] [--once]");
+  const allowed = new Set(["--all", "--once", "--codex-dcr"]);
+  if (args.some((arg) => !allowed.has(arg)) || new Set(args).size !== args.length) {
+    throw new Error("usage: session.mjs watch [--all] [--once] [--codex-dcr]");
+  }
   const once = args.includes("--once");
   const fromStart = once || args.includes("--all");
+  const codexDcr = args.includes("--codex-dcr");
   const session = validSession(readPrivateJson(SESSION_FILE));
   if (session === undefined) throw new Error("run session.mjs serve before watch");
   const versions = clientVersions();
@@ -150,7 +197,7 @@ async function watch(args) {
         if (!finalize && ["INCOMPLETE", "TOKEN_ONLY"].includes(outcome.verdict)) continue;
         const result = resultFor({
           leg, flow, flows, mode: session.mode, commit: session.commit, clean: session.clean,
-          clientVersions: versions, observedAt: new Date().toISOString(),
+          clientVersions: versions, observedAt: new Date().toISOString(), codexDcr,
         });
         reported.add(key);
         printResult(result);
@@ -175,7 +222,7 @@ async function main([name, ...args]) {
   if (name === "serve") return serve(args);
   if (name === "watch") return watch(args);
   if (name === "cleanup" && args.length === 0) return cleanupClients() ? 0 : 1;
-  throw new Error("usage: session.mjs serve [cloudflare_access|entra|google ...] | watch [--all] [--once] | cleanup");
+  throw new Error("usage: session.mjs serve [cloudflare_access|entra|google ...] | watch [--all] [--once] [--codex-dcr] | cleanup");
 }
 
 try { process.exitCode = await main(process.argv.slice(2)); } catch (error) {

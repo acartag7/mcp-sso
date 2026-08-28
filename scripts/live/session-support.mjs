@@ -110,12 +110,12 @@ export function buildFlows(events) {
   const flows = [];
   const active = new Map();
   let held = [];
-  let inFlight;
   for (const event of events) {
     if (isChallenge(event)) continue;
     if (event.clientId === undefined) {
-      if (event.event === "identity.verify" && event.status === "failure" && inFlight !== undefined) inFlight.events.push(event);
-      else held.push(event);
+      if (event.event === "identity.verify" && event.status === "failure") {
+        flows.push({ clientId: "unattributed", events: [event], unbound: true });
+      } else held.push(event);
       continue;
     }
     let flow = active.get(event.clientId);
@@ -126,24 +126,31 @@ export function buildFlows(events) {
     }
     if (held.length > 0) { flow.events.push(...held); held = []; }
     flow.events.push(event);
-    inFlight = flow;
   }
   return flows;
 }
 
 export const isFragment = (flow) => !flow.events.some((event) => event.event === "oauth.authorize.prepare"
-  || event.event === "oauth.token.authorization_code");
+  || event.event === "oauth.token.authorization_code") && flow.unbound !== true;
 
-export function classifyClient(flow, siblings = []) {
+export function classifyClient(flow, siblings = [], { codexDcr = false } = {}) {
+  if (flow.unbound === true) return {
+    kind: "unattributed", label: "unattributed identity denial", redirectHost: "",
+  };
   const origin = flow.events.find((event) => event.redirectHost)?.redirectHost
     ?? siblings.find((candidate) => candidate.clientId === flow.clientId
       && candidate.events.some((event) => event.redirectHost))?.events.find((event) => event.redirectHost)?.redirectHost
     ?? "";
   let redirectHost = origin;
   try { redirectHost = new URL(origin).hostname; } catch { redirectHost = origin.replace(/^[a-z]+:\/\//i, "").split(":")[0]; }
+  if (redirectHost.startsWith("[") && redirectHost.endsWith("]")) redirectHost = redirectHost.slice(1, -1);
   const loopback = ["localhost", "127.0.0.1", "::1"].includes(redirectHost);
   let document;
   try { document = new URL(flow.clientId); } catch { document = undefined; }
+  if (document === undefined && codexDcr && loopback && /^mcpdc_[a-f0-9]{32}$/.test(flow.clientId)) return {
+    kind: "codex", label: "Codex CLI (operator-annotated DCR)", redirectHost,
+    attribution: "operator-annotated",
+  };
   if (document === undefined) return {
     kind: loopback ? "cli-dcr" : "dcr-hosted",
     label: loopback ? "local CLI (dynamic registration)" : "hosted client (dynamic registration)", redirectHost,
@@ -179,15 +186,16 @@ export function chainOf(flow) {
   return steps.map((step) => step.count > 1 ? `${step.name} x${step.count}` : step.name).join(" -> ");
 }
 
-export function resultFor({ leg, flow, flows, mode, commit, clean, clientVersions, observedAt }) {
-  const client = classifyClient(flow, flows);
+export function resultFor({ leg, flow, flows, mode, commit, clean, clientVersions, observedAt, codexDcr = false }) {
+  const client = classifyClient(flow, flows, { codexDcr });
   const outcome = outcomeOf(flow);
   const row = ROWS.find((candidate) => candidate.leg === leg && candidate.kind === client.kind
     && (candidate.mode === "any" || candidate.mode === mode));
   return {
     row: row?.id, leg, mode, client: client.kind, clientLabel: client.label,
     clientId: flow.clientId, redirectHost: client.redirectHost,
-    clientVersion: clientVersions[client.kind], ...outcome, chain: chainOf(flow), commit, clean, observedAt,
+    clientVersion: clientVersions[client.kind], clientAttribution: client.attribution,
+    ...outcome, chain: chainOf(flow), commit, clean, observedAt,
   };
 }
 
