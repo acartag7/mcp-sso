@@ -233,7 +233,12 @@ exit 0
       for (const leg of legs) {
         assert.match(config, new RegExp(`- hostname: ${ORIGINS[leg].slice("https://".length)}\\n    service: http://127.0.0.1:${PORTS[leg].gateway}$`, "m"),
           "the ingress targets the address readiness and lsof proved");
+        assert.ok(stdout.includes(`claude mcp add --transport http mcp-sso-live-${leg} ${ORIGINS[leg]}/mcp`),
+          `${mode}: Claude Code uses the cleanup-owned name for ${leg}`);
+        assert.ok(stdout.includes(`codex mcp add mcp-sso-live-${leg} --url ${ORIGINS[leg]}/mcp`),
+          `${mode}: Codex uses the cleanup-owned name for ${leg}`);
       }
+      assert.ok(stdout.includes("Cleanup: node session.mjs cleanup"), `${mode}: the recovery command is visible`);
       assert.match(config, /- service: http_status:404\n$/);
     }
     if (["port-busy", "duplicate-leg", "bad-readiness"].includes(mode)) {

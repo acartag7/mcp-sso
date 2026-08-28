@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import {
-  chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync,
+  chmodSync, copyFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
-import { writeResults } from "../scripts/live/session-support.mjs";
+import { readAudit, writeResults } from "../scripts/live/session-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const executable = (path, body) => { writeFileSync(path, body); chmodSync(path, 0o700); };
@@ -97,6 +97,8 @@ test("session serve delegates to serve.sh and cleans only the selected fixed ent
     assert.deepEqual(state.legs, ["google"]);
     assert.equal(state.mode, "stored");
     assert.equal(state.clean, true);
+    assert.equal(statSync(join(f.repo, ".live-state")).mode & 0o077, 0);
+    assert.equal(statSync(join(f.repo, ".live-state/session.json")).mode & 0o077, 0);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -175,6 +177,7 @@ test("one-shot watch records PASS only after a protected request", () => {
     assert.equal(saved.clientVersion, "claude 1.2.3");
     assert.equal(saved.clean, true);
     assert.match(saved.commit, /^[0-9a-f]{40}$/);
+    assert.equal(statSync(join(f.repo, ".live-state/session-results.jsonl")).mode & 0o077, 0);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -260,5 +263,22 @@ test("a hard-linked result path is rejected before its other name is truncated",
     linkSync(original, results);
     assert.throws(() => writeResults(results, [{ verdict: "PASS" }], { replace: true }), /single-link|private regular file/);
     assert.equal(readFileSync(original, "utf8"), "keep\n");
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("audit reads reject non-files, oversized input, unknown events, and wrong field types", () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-audit-"));
+  const path = join(root, "audit.jsonl");
+  try {
+    assert.throws(() => readAudit(root), /bounded regular file/);
+    writeFileSync(path, "x".repeat(10 * 1024 * 1024 + 1));
+    assert.throws(() => readAudit(path), /size limit|bounded regular file/);
+    for (const row of [
+      { occurredAt: new Date().toISOString(), event: "unknown", status: "success" },
+      { occurredAt: new Date().toISOString(), event: "auth.request", status: 200 },
+    ]) {
+      writeFileSync(path, `${JSON.stringify(row)}\n`);
+      assert.throws(() => readAudit(path), /invalid status|valid event status/);
+    }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
