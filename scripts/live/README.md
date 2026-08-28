@@ -139,6 +139,20 @@ What "private value" means, in the masker and in the orchestrator's own scan: ev
 
 ## Driving a real MCP client
 
+Use the session helper for a manual client run. It keeps the operator flow to two terminals and saves the audit-derived observations under `.live-state/`:
+
+```sh
+# terminal 1
+node scripts/live/session.mjs serve
+
+# terminal 2
+node scripts/live/session.mjs watch
+```
+
+`serve` defaults to all three legs and prints the Claude Code, Codex, ChatGPT, and claude.ai connection commands. Press Ctrl-C in the `serve` terminal when the run is finished. The helper stops `serve.sh` and removes its selected `mcp-sso-live-<leg>` entries from Claude Code and Codex. After a crash, run `node scripts/live/session.mjs cleanup`; it removes all six reserved entries and leaves every other MCP entry alone.
+
+`watch` prints one settled result per client flow and appends it to `.live-state/session-results.jsonl`. `PASS` means the audit trail contains both an authorization-code exchange and a successful protected `/mcp` request. `TOKEN_ONLY` means the code exchange completed but no protected request followed. Run `node scripts/live/session.mjs watch --all --once` to rebuild a one-shot summary from the current audit files.
+
 ```sh
 scripts/live/serve.sh cloudflare_access entra google
 ```

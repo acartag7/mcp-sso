@@ -6,6 +6,7 @@
 | --- | --- | --- |
 | `run.sh` | One named provider leg | Loads allowlisted values, validates the environment, identifies the runtime commit, and runs one probe. |
 | `serve.sh` | One or more named provider legs | Starts the selected example servers, checks listener ownership, exposes the named tunnel, and supervises each child process. |
+| `session.mjs` | A local manual-client session | `serve` runs `serve.sh`, `watch` reads the served legs' audit trails and records what each client flow reached, and `cleanup` removes the helper's fixed `mcp-sso-live-<leg>` entries from Claude Code and Codex. A token exchange with no protected `/mcp` request is recorded as `TOKEN_ONLY`, not `PASS`. Results go to ignored working state under `.live-state/`; the helper does not turn them into release evidence or update documentation. |
 | `probe-cloudflare.mjs` | Cloudflare Access | Checks that a provider-signed assertion reaches consent and that missing or attacker-signed assertions fail. |
 | `probe-entra.mjs` | Microsoft Entra ID | Checks discovery, JWKS availability, the authorization redirect, the flow cookie, and one local group-denial control. |
 | `probe-google.mjs` | Google | Checks discovery through the shipped OIDC discovery resolver, which requires HTTPS endpoints but is deliberately not the CIMD SSRF guard because the issuer is deployer-trusted configuration, and checks the authorization redirect to the validated endpoint. |
@@ -25,6 +26,10 @@
 ## Evidence boundary
 
 A harness run is not provider evidence unless it reaches the named provider infrastructure and records the observed result. A unit or integration test can prove that the harness routes inputs correctly. It cannot prove that a provider accepted a request.
+
+`session.mjs watch` derives its result from `.live-state/<leg>/audit.jsonl`, not from a client message. A complete authorization-code exchange with at least one successful protected request is `PASS`. A complete exchange without a protected request is `TOKEN_ONLY`. A failed identity event is `DENIED`, and a flow that reaches neither result is `INCOMPLETE`. An unreadable JSON line makes the watch command fail and records no result for that trail.
+
+`session.mjs serve` accepts only the three named legs and rejects repeats before starting `serve.sh`. It reserves `mcp-sso-live-cloudflare_access`, `mcp-sso-live-entra`, and `mcp-sso-live-google` as its Claude Code and Codex entry names. Normal serve shutdown attempts every selected cleanup target. `session.mjs cleanup` attempts all six targets after a crash. A missing entry is already clean. Any other client-command failure makes cleanup fail after it has attempted the remaining targets. No cleanup path reads a name from a file or accepts one from the command line, so it cannot select another MCP entry.
 
 Two rules keep a run reproducible. The provider mapping and credentials reach the process through configuration and `run.sh`, never by patching source: a run that edits library or example code to make a leg pass has verified the patch, not the release, and is not evidence. Provider credentials and private infrastructure handles arrive through `MCP_SSO_*` environment variables for the duration of the run, and every probe's output guards keep them out of the evidence it prints. Everything a run observes, such as reason codes, statuses, and flows, is public and belongs in the current results pages.
 
