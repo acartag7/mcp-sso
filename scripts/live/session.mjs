@@ -133,7 +133,7 @@ function readFlows(session) {
 }
 
 function printResult(result) {
-  const row = result.row === undefined ? "extra" : result.row;
+  const row = result.verdict === "REQUEST" ? "unattributed" : result.row === undefined ? "extra" : result.row;
   const detail = result.verdict === "REQUEST"
     ? "protected /mcp request observed for this client id"
     : result.verdict === "TOKEN"

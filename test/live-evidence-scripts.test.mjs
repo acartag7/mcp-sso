@@ -454,7 +454,7 @@ test("CONTENT records: harness reference, README, and CHECKLIST agree with what 
   assert.match(DOC, /MCP_SSO_READINESS_SECONDS/);
   assert.match(DOC, /`TOKEN` records a successful authorization-code exchange/);
   assert.match(DOC, /`REQUEST` separately records a successful protected request/);
-  assert.match(README, /does not claim that a `REQUEST` used the token/);
+  assert.match(README, /does not assign `REQUEST` to a client row/);
   assert.match(README, /~\/\.mcp-sso-google\.env/);
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);
   assert.match(README, /OIDC_CLIENT_SECRET/);

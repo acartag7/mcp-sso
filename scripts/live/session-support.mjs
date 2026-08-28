@@ -138,6 +138,7 @@ export const isFragment = (flow) => !flow.events.some((event) => event.event ===
 
 export function classifyClient(flow, siblings = [], { codexDcr = false } = {}) {
   if (flow.unbound === true) return { kind: "unattributed", label: "unattributed identity denial", redirectHost: "" };
+  if (flow.requestOnly === true) return { kind: "unattributed", label: "unattributed protected request", redirectHost: "" };
   const identifiedHost = (candidate) => candidate.events.find((event) => event.event === "oauth.authorize.prepare"
     && event.clientId === candidate.clientId && event.redirectHost)?.redirectHost
     ?? candidate.events.find((event) => event.clientId === candidate.clientId && event.redirectHost)?.redirectHost;

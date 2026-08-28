@@ -218,11 +218,14 @@ test("a same-client cached-token request cannot upgrade a token observation", ()
     const result = run(f, ["watch", "--all", "--once"]);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /TOKEN A3 google Claude Code/);
-    assert.match(result.stdout, /REQUEST A3 google Claude Code/);
+    assert.match(result.stdout, /REQUEST unattributed google unattributed protected request/);
     const saved = lines(join(f.repo, ".live-state/session-results.jsonl")).map((line) => JSON.parse(line));
     assert.deepEqual(saved.map(({ verdict }) => verdict), ["TOKEN", "REQUEST"]);
     assert.deepEqual(saved.map(({ protectedRequests }) => protectedRequests), [0, 1]);
-    assert.ok(saved.every(({ clientVersion }) => clientVersion === "claude 1.2.3"));
+    assert.equal(saved[0].clientVersion, "claude 1.2.3");
+    assert.equal(saved[1].client, "unattributed");
+    assert.equal(saved[1].row, undefined);
+    assert.equal(saved[1].clientVersion, undefined);
   } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
@@ -258,15 +261,41 @@ test("default watch reports a flow that settles after watch starts", async () =>
     });
     await new Promise((resolve) => { setTimeout(resolve, 1_200); });
     appendFileSync(auditPath, `${events.slice(3).map(JSON.stringify).join("\n")}\n`);
-    const output = await waitForOutput(child, /REQUEST A3 google Claude Code/);
+    const output = await waitForOutput(child, /REQUEST unattributed google unattributed protected request/);
     assert.match(output, /TOKEN A3 google Claude Code/);
-    assert.match(output, /REQUEST A3 google Claude Code/);
+    assert.match(output, /REQUEST unattributed google unattributed protected request/);
     child.kill("SIGINT");
     assert.equal(await new Promise((resolve) => { child.once("exit", resolve); }), 0);
   } finally {
     if (child?.exitCode === null) child.kill("SIGKILL");
     rmSync(f.root, { recursive: true, force: true });
   }
+});
+
+test("a request shared by loopback and hosted attempts stays unattributed", () => {
+  const f = fixture();
+  try {
+    assert.equal(run(f, ["serve", "google"]).status, 0);
+    const clientId = "https://claude.ai/oauth-client";
+    const at = (offset) => new Date(Date.now() + 1_000 + offset).toISOString();
+    const rows = [
+      { occurredAt: at(0), event: "oauth.cimd.fetch", status: "success", clientId },
+      { occurredAt: at(1), event: "oauth.authorize.prepare", status: "success", clientId, redirectHost: "http://localhost:49152/callback" },
+      { occurredAt: at(2), event: "oauth.token.authorization_code", status: "success", clientId },
+      { occurredAt: at(3), event: "oauth.authorize.prepare", status: "success", clientId, redirectHost: "https://claude.ai/callback" },
+      { occurredAt: at(4), event: "oauth.token.authorization_code", status: "success", clientId },
+      { occurredAt: at(5), event: "auth.request", status: "success", clientId },
+    ];
+    const leg = join(f.repo, ".live-state/google");
+    mkdirSync(leg, { recursive: true });
+    writeFileSync(join(leg, "audit.jsonl"), `${rows.map(JSON.stringify).join("\n")}\n`);
+    assert.equal(run(f, ["watch", "--all", "--once"]).status, 0);
+    const saved = lines(join(f.repo, ".live-state/session-results.jsonl")).map((line) => JSON.parse(line));
+    assert.deepEqual(saved.map(({ row }) => row), ["A3", "F3", undefined]);
+    assert.equal(saved[2].verdict, "REQUEST");
+    assert.equal(saved[2].client, "unattributed");
+    assert.equal(saved[2].redirectHost, "");
+  } finally { rmSync(f.root, { recursive: true, force: true }); }
 });
 
 test("flow grouping keeps requests, repeated attempts, and unattributed denials separate", () => {

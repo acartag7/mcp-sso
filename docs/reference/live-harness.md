@@ -27,7 +27,7 @@
 
 A harness run is not provider evidence unless it reaches the named provider infrastructure and records the observed result. A unit or integration test can prove that the harness routes inputs correctly. It cannot prove that a provider accepted a request.
 
-`session.mjs watch` derives its result from `.live-state/<leg>/audit.jsonl`, not from a client message. `TOKEN` records a successful authorization-code exchange. `REQUEST` separately records a successful protected request for that client id; it does not claim the request used the token from the observed exchange. The helper records identity failures and unfinished flows separately. For a signed-out Codex run that uses dynamic registration, `--codex-dcr` identifies the generated loopback flow as Codex.
+`session.mjs watch` derives its result from `.live-state/<leg>/audit.jsonl`, not from a client message. `TOKEN` records a successful authorization-code exchange. `REQUEST` separately records a successful protected request for that client id. It is not assigned to a client row because the audit does not identify which access token or authorization attempt made the request. The helper records identity failures and unfinished flows separately. For a signed-out Codex run that uses dynamic registration, `--codex-dcr` identifies the generated loopback authorization flow as Codex.
 
 The helper is repository tooling for one operator. Run one `serve` and one `watch`, and stop both before starting another session. It does not coordinate concurrent commands. Its results remain under `.live-state/` and do not become release evidence automatically.
 
