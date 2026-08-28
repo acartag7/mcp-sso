@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync } from "node:crypto";
 import {
-  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync,
+  chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync,
   symlinkSync, writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -113,6 +113,46 @@ test("BEHAVIOUR run-support: the Google credential file is read as owner-only da
     assert.throws(() => readGoogleCredentialFile(link), /symlink/);
     assert.throws(() => readGoogleCredentialFile(dir), /regular file|opened/);
     assert.throws(() => readGoogleCredentialFile(join(dir, "missing")), /opened/);
+    const preload = join(dir, "grow-after-fstat.cjs");
+    const runner = join(dir, "read-growing.mjs");
+    write("GOOGLE_CLIENT_ID=id\nGOOGLE_CLIENT_SECRET=secret\n");
+    writeFileSync(preload, `
+const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const originalFstatSync = fs.fstatSync;
+const originalReadFileSync = fs.readFileSync;
+let grown = false;
+fs.fstatSync = function (fd, ...args) {
+  const stat = originalFstatSync.call(this, fd, ...args);
+  if (!grown && stat.isFile() && stat.size === Number(process.env.GROW_INITIAL_SIZE)) {
+    grown = true;
+    fs.appendFileSync(process.env.GROW_PATH, Buffer.alloc(16 * 1024 + 1));
+  }
+  return stat;
+};
+fs.readFileSync = function (path, ...args) {
+  if (typeof path === "number") throw new Error("uncapped descriptor read");
+  return originalReadFileSync.call(this, path, ...args);
+};
+syncBuiltinESMExports();
+`);
+    writeFileSync(runner, `
+import { readGoogleCredentialFile } from ${JSON.stringify(join(ROOT, "scripts/live/run-support.mjs"))};
+try {
+  readGoogleCredentialFile(process.env.GROW_PATH);
+  throw new Error("growing credential was accepted");
+} catch (error) {
+  if (!String(error?.message).includes("grew beyond")) throw error;
+}
+`);
+    const growth = spawnSync(process.execPath, [runner], {
+      env: {
+        ...process.env, NODE_OPTIONS: `--require=${preload}`, GROW_PATH: file,
+        GROW_INITIAL_SIZE: String(statSync(file).size),
+      },
+      encoding: "utf8",
+    });
+    assert.equal(growth.status, 0, growth.stderr);
     if (process.platform !== "win32") {
       // A FIFO at the path must fail the regular-file check, not block the open.
       // Probed in a child with a deadline so a regression fails instead of hanging.

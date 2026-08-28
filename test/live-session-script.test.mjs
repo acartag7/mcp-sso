@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import {
-  acquireSessionLock, buildFlows, classifyClient, outcomeOf, readAudit, readPrivateJson, writeResults,
+  acquireSessionLock, buildFlows, classifyClient, flowKey, outcomeOf, readAudit, readPrivateJson, writeResults,
 } from "../scripts/live/session-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -749,6 +749,18 @@ test("reused-client attempts split and later protected requests stay ambiguous",
   ]);
 });
 
+test("same-millisecond attempts have distinct reporting keys", () => {
+  const clientId = "stored-client";
+  const occurredAt = "2026-08-28T20:00:00.000Z";
+  const prepare = { occurredAt, event: "oauth.authorize.prepare", status: "success", clientId };
+  const token = { occurredAt: "2026-08-28T20:00:00.001Z", event: "oauth.token.authorization_code", status: "success", clientId };
+  const flows = buildFlows([prepare, token, prepare, token]);
+  assert.equal(flows.length, 2);
+  assert.equal(flows[0].events[0].event, flows[1].events[0].event);
+  assert.equal(flows[0].events[0].occurredAt, flows[1].events[0].occurredAt);
+  assert.notEqual(flowKey("google", flows[0]), flowKey("google", flows[1]));
+});
+
 test("a protected request before the code exchange does not turn the later token into PASS", () => {
   const f = fixture();
   try {
@@ -859,6 +871,60 @@ test("audit reads reject non-files, oversized input, unknown events, and wrong f
     ]) {
       writeFileSync(path, `${JSON.stringify(row)}\n`);
       assert.throws(() => readAudit(path), /invalid status|valid event status/);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("audit and private-state readers cap files that grow after admission", () => {
+  const root = mkdtempSync(join(tmpdir(), "mcp-sso-session-growing-"));
+  const preload = join(root, "grow-after-fstat.cjs");
+  const runner = join(root, "read-growing.mjs");
+  const stateDir = join(root, "state");
+  mkdirSync(stateDir, { mode: 0o700 });
+  writeFileSync(preload, `
+const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const originalFstatSync = fs.fstatSync;
+const originalReadFileSync = fs.readFileSync;
+let grown = false;
+fs.fstatSync = function (fd, ...args) {
+  const stat = originalFstatSync.call(this, fd, ...args);
+  if (!grown && stat.isFile() && stat.size === Number(process.env.GROW_INITIAL_SIZE)) {
+    grown = true;
+    fs.appendFileSync(process.env.GROW_PATH, Buffer.alloc(10 * 1024 * 1024 + 1));
+  }
+  return stat;
+};
+fs.readFileSync = function (path, ...args) {
+  if (typeof path === "number") throw new Error("uncapped descriptor read");
+  return originalReadFileSync.call(this, path, ...args);
+};
+syncBuiltinESMExports();
+`);
+  writeFileSync(runner, `
+import { readAudit, readPrivateJson } from ${JSON.stringify(new URL("../scripts/live/session-support.mjs", import.meta.url).href)};
+const read = process.env.GROW_KIND === "audit" ? readAudit : readPrivateJson;
+try {
+  read(process.env.GROW_PATH);
+  throw new Error("growing file was accepted");
+} catch (error) {
+  if (!String(error?.message).includes(process.env.GROW_ERROR)) throw error;
+}
+`);
+  try {
+    for (const fixture of [
+      { kind: "audit", path: join(root, "audit.jsonl"), body: `${JSON.stringify(audit("client")[0])}\n`, error: "file grew" },
+      { kind: "state", path: join(stateDir, "session.json"), body: "{}\n", error: "state grew" },
+    ]) {
+      writeFileSync(fixture.path, fixture.body, { mode: 0o600 });
+      const result = spawnSync(process.execPath, [runner], {
+        env: {
+          ...process.env, NODE_OPTIONS: `--require=${preload}`, GROW_KIND: fixture.kind,
+          GROW_PATH: fixture.path, GROW_INITIAL_SIZE: String(Buffer.byteLength(fixture.body)), GROW_ERROR: fixture.error,
+        },
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stderr);
     }
   } finally { rmSync(root, { recursive: true, force: true }); }
 });

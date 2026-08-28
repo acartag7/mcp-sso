@@ -6,7 +6,7 @@
 // surface the shell scripts call. No value read here is ever printed; failures
 // exit with a fixed reason.
 import {
-  chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync,
+  chmodSync, closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync,
   rmSync,
 } from "node:fs";
 import { join } from "node:path";
@@ -30,6 +30,18 @@ const CREDENTIAL_KEYS = new Set(["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "OI
 
 const isPlainObject = (value) => value !== null && typeof value === "object"
   && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+const readCappedUtf8 = (fd, maxBytes) => {
+  const chunks = [];
+  const scratch = Buffer.allocUnsafe(Math.min(64 * 1024, maxBytes + 1));
+  let total = 0;
+  while (total <= maxBytes) {
+    const count = readSync(fd, scratch, 0, Math.min(scratch.length, maxBytes + 1 - total), null);
+    if (count === 0) return Buffer.concat(chunks, total).toString("utf8");
+    chunks.push(Buffer.from(scratch.subarray(0, count)));
+    total += count;
+  }
+  throw new RunSupportError("credential file grew beyond its size limit");
+};
 const parseObject = (raw, what) => {
   let parsed;
   try {
@@ -89,7 +101,8 @@ export function groupAuthorizationJsonFromMapping(rawJson) {
  *  without following symlinks and without blocking (so a FIFO at the path fails
  *  the regular-file check instead of hanging the open), checked (regular file,
  *  caller-owned, no group or other permission bits, bounded size) on that same
- *  descriptor, and parsed as KEY=VALUE data. It is never sourced. */
+ *  descriptor, read through a cap plus one overflow byte, and parsed as
+ *  KEY=VALUE data. It is never sourced. */
 function readPrivateText(path, uid, maxBytes) {
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
     throw new RunSupportError("credential file reads require O_NOFOLLOW");
@@ -106,7 +119,7 @@ function readPrivateText(path, uid, maxBytes) {
     if (uid !== undefined && st.uid !== uid) throw new RunSupportError("credential file is not owned by the caller");
     if ((st.mode & 0o077) !== 0) throw new RunSupportError("credential file must have no group or other permission bits");
     if (st.size > maxBytes) throw new RunSupportError("credential file is too large");
-    return readFileSync(fd, "utf8");
+    return readCappedUtf8(fd, maxBytes);
   } finally {
     closeSync(fd);
   }

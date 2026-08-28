@@ -4,7 +4,7 @@
 // source stack, fetched from Secrets Manager by fetch-bundle.mjs) instead of
 // from OpenTofu state. The bundle is read through one descriptor with the same
 // checks the Google credential file gets, and every value is data.
-import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readSync } from "node:fs";
 
 export class BundleError extends Error {}
 export const STACK_HANDLE = /^[a-z][a-z-]{0,31}$/;
@@ -16,11 +16,24 @@ const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
 
 const isPlainObject = (value) => value !== null && typeof value === "object"
   && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+const readCappedUtf8 = (fd) => {
+  const chunks = [];
+  const scratch = Buffer.allocUnsafe(MAX_BUNDLE_BYTES + 1);
+  let total = 0;
+  while (total <= MAX_BUNDLE_BYTES) {
+    const count = readSync(fd, scratch, 0, MAX_BUNDLE_BYTES + 1 - total, null);
+    if (count === 0) return Buffer.concat(chunks, total).toString("utf8");
+    chunks.push(Buffer.from(scratch.subarray(0, count)));
+    total += count;
+  }
+  throw new BundleError("bundle file grew beyond its size limit");
+};
 
 /** Read one private JSON file through ONE descriptor: opened without following
  *  symlinks and without blocking, checked (regular file, caller-owned, no group
- *  or other permission bits, bounded size) on that same descriptor, and parsed
- *  as a JSON object. Anything else is a fixed-reason failure. */
+ *  or other permission bits, bounded size) on that same descriptor, read through
+ *  a cap plus one overflow byte, and parsed as a JSON object. Anything else is a
+ *  fixed-reason failure. */
 export function readPrivateJson(path, uid = process.getuid?.()) {
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
     throw new BundleError("bundle reads require O_NOFOLLOW");
@@ -38,7 +51,7 @@ export function readPrivateJson(path, uid = process.getuid?.()) {
     if (uid !== undefined && st.uid !== uid) throw new BundleError("bundle file is not owned by the caller");
     if ((st.mode & 0o077) !== 0) throw new BundleError("bundle file must have no group or other permission bits");
     if (st.size > MAX_BUNDLE_BYTES) throw new BundleError("bundle file is too large");
-    text = readFileSync(fd, "utf8");
+    text = readCappedUtf8(fd);
   } finally {
     closeSync(fd);
   }

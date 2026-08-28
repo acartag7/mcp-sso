@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import {
-  chmodSync, closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync,
+  chmodSync, closeSync, constants, fstatSync, ftruncateSync, lstatSync, mkdirSync, openSync, readSync, writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
 
@@ -61,6 +61,20 @@ export function clientEntries(legs = LEGS) {
   ]);
 }
 
+function readCappedUtf8(fd, overflowMessage) {
+  const chunks = [];
+  const scratch = Buffer.allocUnsafe(64 * 1024);
+  let total = 0;
+  while (total <= MAX_AUDIT_BYTES) {
+    const length = Math.min(scratch.length, MAX_AUDIT_BYTES + 1 - total);
+    const count = readSync(fd, scratch, 0, length, null);
+    if (count === 0) return Buffer.concat(chunks, total).toString("utf8");
+    chunks.push(Buffer.from(scratch.subarray(0, count)));
+    total += count;
+  }
+  throw new Error(overflowMessage);
+}
+
 function readBoundedFile(path) {
   if (typeof constants.O_NOFOLLOW !== "number" || constants.O_NOFOLLOW === 0) {
     throw new Error("live-session file reads require O_NOFOLLOW");
@@ -75,9 +89,7 @@ function readBoundedFile(path) {
   try {
     const stat = fstatSync(fd);
     if (!stat.isFile() || stat.size > MAX_AUDIT_BYTES) throw new Error("live-session file is not a bounded regular file");
-    const body = readFileSync(fd, "utf8");
-    if (Buffer.byteLength(body) > MAX_AUDIT_BYTES) throw new Error("live-session file grew beyond its size limit");
-    return body;
+    return readCappedUtf8(fd, "live-session file grew beyond its size limit");
   } finally {
     closeSync(fd);
   }
@@ -112,8 +124,7 @@ function readPrivateFile(path, uid) {
       || (stat.mode & 0o077) !== 0 || stat.size > MAX_AUDIT_BYTES) {
       throw new Error("live-session state is not a private bounded regular file");
     }
-    const body = readFileSync(fd, "utf8");
-    if (Buffer.byteLength(body) > MAX_AUDIT_BYTES) throw new Error("live-session state grew beyond its size limit");
+    const body = readCappedUtf8(fd, "live-session state grew beyond its size limit");
     const after = inspectPrivateDir(dirname(path), uid);
     if (after === undefined || before.dev !== after.dev || before.ino !== after.ino) {
       throw new Error("live-session state directory changed while reading");
@@ -165,7 +176,7 @@ export function buildFlows(events) {
     if (!SESSION_EVENTS.has(event.event)) continue;
     if (event.clientId === undefined) {
       if (event.event === "identity.verify" && event.status === "failure") {
-        flows.push({ clientId: "unattributed", events: [event], unbound: true });
+        flows.push({ ordinal: flows.length, clientId: "unattributed", events: [event], unbound: true });
       } else held.push(event);
       continue;
     }
@@ -175,7 +186,7 @@ export function buildFlows(events) {
     const startsAnotherAttempt = event.event === "oauth.authorize.prepare"
       && flow?.events.some((candidate) => candidate.event === "oauth.authorize.prepare");
     if (flow === undefined || STARTS.has(event.event) || startsAnotherAttempt) {
-      flow = { clientId: event.clientId, events: [] };
+      flow = { ordinal: flows.length, clientId: event.clientId, events: [] };
       flows.push(flow);
       clientAttempts.push(flow);
       active.set(event.clientId, flow);
@@ -267,7 +278,7 @@ export function resultFor({ leg, flow, flows, mode, commit, clean, clientVersion
 
 export function flowKey(leg, flow) {
   const first = flow.events[0];
-  return `${leg}\0${flow.clientId}\0${first?.occurredAt ?? ""}\0${first?.event ?? ""}`;
+  return `${leg}\0${flow.clientId}\0${flow.ordinal}\0${first?.occurredAt ?? ""}\0${first?.event ?? ""}`;
 }
 
 function ensurePrivateDir(path, uid = process.getuid?.()) {

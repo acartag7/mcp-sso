@@ -77,6 +77,47 @@ test("BEHAVIOUR bundle-support: a bundle is read as owner-only data and answered
     assert.throws(() => readBundleFile(join(dir, "missing.json")), /opened/);
     privateFile(join(dir, "big.json"), JSON.stringify({ v: "x".repeat(70_000) }));
     assert.throws(() => readBundleFile(join(dir, "big.json")), /too large/);
+    const growing = join(dir, "growing.json");
+    const preload = join(dir, "grow-after-fstat.cjs");
+    const runner = join(dir, "read-growing.mjs");
+    privateFile(growing, JSON.stringify({ v: "small" }));
+    writeFileSync(preload, `
+const fs = require("node:fs");
+const { syncBuiltinESMExports } = require("node:module");
+const originalFstatSync = fs.fstatSync;
+const originalReadFileSync = fs.readFileSync;
+let grown = false;
+fs.fstatSync = function (fd, ...args) {
+  const stat = originalFstatSync.call(this, fd, ...args);
+  if (!grown && stat.isFile() && stat.size === Number(process.env.GROW_INITIAL_SIZE)) {
+    grown = true;
+    fs.appendFileSync(process.env.GROW_PATH, Buffer.alloc(64 * 1024 + 1));
+  }
+  return stat;
+};
+fs.readFileSync = function (path, ...args) {
+  if (typeof path === "number") throw new Error("uncapped descriptor read");
+  return originalReadFileSync.call(this, path, ...args);
+};
+syncBuiltinESMExports();
+`);
+    writeFileSync(runner, `
+import { readBundleFile } from ${JSON.stringify(join(ROOT, "scripts/live/ci/bundle-support.mjs"))};
+try {
+  readBundleFile(process.env.GROW_PATH);
+  throw new Error("growing bundle was accepted");
+} catch (error) {
+  if (!String(error?.message).includes("grew beyond")) throw error;
+}
+`);
+    const growth = spawnSync(process.execPath, [runner], {
+      env: {
+        ...process.env, NODE_OPTIONS: `--require=${preload}`, GROW_PATH: growing,
+        GROW_INITIAL_SIZE: String(statSync(growing).size),
+      },
+      encoding: "utf8",
+    });
+    assert.equal(growth.status, 0, growth.stderr);
     const values = privateValues(readBundleFile(join(dir, "cloudflare.json")));
     assert.ok(values.has("https://entra.example") && values.has("entra.example"), "origins and their bare hosts are private");
     assert.ok(values.has("fixture tenant"), "a value under a credential or identity key is private at any length");
