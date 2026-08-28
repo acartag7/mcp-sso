@@ -90,7 +90,7 @@ RUN_INTEGRATION=true \
   node scripts/live/rehearsal.mjs
 ```
 
-`rehearsal.mjs` runs these rows, each through `run.sh`, in this order, and writes `.live-state/receipt.json`: the runtime commit, whether the tree was dirty, and per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines, its `NOTE` lines (what the row observed rather than what it checked: the client version a CLI row ran, the audit sequence, a skipped tool call), the check counts, and the duration. `render-evidence.mjs` reads the client version out of those `NOTE` lines, so a receipt that dropped them could not be recorded. It exits 0 only when every row is `PASS` on a clean tree; that is the only receipt that counts as evidence.
+`rehearsal.mjs` runs these rows, each through `run.sh`, in this order, and writes `.live-state/receipt.json`: the runtime commit, whether the tree was dirty, and per row the status, the probe's own `PASS`/`FAIL`/`CONTROL` lines, its `NOTE` lines (what the row observed rather than what it checked: the client version a CLI row ran, the audit sequence, a skipped tool call), the check counts, and the duration. `record-receipt.mjs` reads the client version out of those `NOTE` lines when it records a row, so a receipt that dropped them could not be recorded. It exits 0 only when every row is `PASS` on a clean tree; that is the only receipt that counts as evidence.
 
 | Row | What runs |
 | --- | --- |
@@ -110,14 +110,14 @@ The client rows run against legs the rehearsal brings up itself through `serve.s
 ### Recording a passing receipt
 
 ```sh
-node scripts/live/render-evidence.mjs --receipt .live-state/receipt.json --date 2026-08-25 --write
+node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json --write
 ```
 
-`render-evidence.mjs` turns a receipt whose every row passed on a clean tree into the evidence record `docs/client-compatibility.md`: it replaces the provider rows the rehearsal proved (the Entra and Cloudflare SDK flows, the five Entra deny fixtures, the Claude Code and Codex CLI rows on both those legs, the Google probe with its sign-in limit) and, when the `release-matrix` row passed, every public-export row, all at the receipt's runtime commit. Rows the rehearsal did not drive are kept as they are: the ChatGPT and claude.ai connectors, and any client against the Google leg. Before anything is written, the rendered document is checked with the same parser `check:release-ready` uses, at the receipt's commit; a receipt that is not evidence, or a rendering the gate would refuse, is an error and writes nothing.
+`record-receipt.mjs` turns a receipt whose every row passed on a clean tree into the release evidence the gate reads: one JSON document under `docs/evidence/` naming the runtime commit, every row and its status, and the release-matrix rows the run proved. It re-derives completeness from the receipt's own rows rather than trusting the receipt to summarise itself, so a partial run, a dirty tree, a failed row, or a row the rehearsal does not define is refused and nothing is written.
 
-Rows the rehearsal does not drive keep their own recorded commits: the ChatGPT and claude.ai connectors, and any client against the Google leg, whose sign-in a person still performs. Claude Code and Codex CLI are not among them any more; the renderer replaces their rows from the four CLI results in the same receipt, so a hand-recorded row for either is overwritten at the next recording. When a row it does not drive is stale against the receipt's commit the renderer names it on stderr and still writes, because `check:release-ready` will refuse the release for exactly that reason and the two messages should agree.
+`check:release-ready` reads those documents. It reads no prose: [`docs/client-compatibility.md`](../../docs/client-compatibility.md) is written for readers, and an operator's own live client runs are recorded the same way, as a receipt with `producer: "operator"`.
 
-In CI, `gh workflow run live.yml -f record=true` on `main` runs the rehearsal and then, from a passing receipt whose commit is the checked-out `HEAD`, renders the record and opens the evidence pull request on an `evidence/<sha>-<run id>` branch, so a recording interrupted after the push can be dispatched again without deleting a branch by hand. That second job never holds the AWS role, installs no dependency, and never persists a checkout credential; the rehearsal job never holds a write token. A branch pushed by the workflow token starts no CI run of its own, so the pull request says how to start one (`gh pr close <n> && gh pr reopen <n>`). The nightly run and the `rehearsal/*` runs never record.
+In CI, `gh workflow run live.yml -f record=true` on `main` runs the rehearsal and then records the receipt from a passing run whose commit is the checked-out `HEAD`, uploading the document as the `evidence-<sha>` artifact. That job holds no write token and no checkout credential. Download the artifact, commit the file, and open a pull request. The nightly run and the `rehearsal/*` runs never record.
 
 ### The identity driver
 

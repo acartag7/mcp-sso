@@ -1,0 +1,81 @@
+{
+  "schema": 1,
+  "producer": "operator",
+  "runtimeCommit": "c9cec910258e08f3f8cae4bdb8d485b2e01d9a1b",
+  "recordedAt": "2026-08-27T07:41:47.240Z",
+  "complete": true,
+  "rows": [
+    {
+      "id": "C2",
+      "status": "PASS",
+      "client": "ChatGPT connector",
+      "leg": "entra",
+      "dcrMode": "stored",
+      "clientId": "https://chatgpt.com/oauth/client.json",
+      "protectedRequests": 10
+    },
+    {
+      "id": "F2",
+      "status": "PASS",
+      "client": "claude.ai connector",
+      "leg": "entra",
+      "dcrMode": "stored",
+      "clientId": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+      "protectedRequests": 8
+    },
+    {
+      "id": "F1",
+      "status": "PASS",
+      "client": "claude.ai connector",
+      "leg": "cloudflare_access",
+      "dcrMode": "stored",
+      "clientId": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+      "protectedRequests": 18
+    },
+    {
+      "id": "C1",
+      "status": "PASS",
+      "client": "ChatGPT connector",
+      "leg": "cloudflare_access",
+      "dcrMode": "stored",
+      "clientId": "https://chatgpt.com/oauth/client.json",
+      "protectedRequests": 10
+    },
+    {
+      "id": "F2s",
+      "status": "PASS",
+      "client": "claude.ai connector, stateless DCR",
+      "leg": "entra",
+      "dcrMode": "stateless",
+      "clientId": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+      "protectedRequests": 8
+    },
+    {
+      "id": "A3",
+      "status": "PASS",
+      "client": "Claude Code",
+      "leg": "google",
+      "dcrMode": "stored",
+      "clientId": "https://claude.ai/oauth/claude-code-client-metadata",
+      "protectedRequests": 4
+    },
+    {
+      "id": "B3",
+      "status": "PASS",
+      "client": "Codex CLI",
+      "leg": "google",
+      "dcrMode": "stored",
+      "clientId": "https://chatgpt.com/oauth/codex/c50ro4oho5AB/client.json",
+      "protectedRequests": 0
+    },
+    {
+      "id": "F3",
+      "status": "PASS",
+      "client": "claude.ai connector",
+      "leg": "google",
+      "dcrMode": "stored",
+      "clientId": "https://claude.ai/oauth/mcp-oauth-client-metadata",
+      "protectedRequests": 12
+    }
+  ]
+}

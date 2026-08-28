@@ -5,7 +5,7 @@ Use this checklist for a release candidate. The [release verification reference]
 ## Merge the version bump
 
 1. Push the final versioned runtime tree on a feature branch and open or update its pull request.
-2. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
+8. Add or update the matching Tier 1 rows in [the release verification reference](verification.md).
 3. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
 4. Read every review and inline thread.
 5. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
@@ -47,16 +47,15 @@ Use this checklist for a release candidate. The [release verification reference]
 
 ## Record live compatibility claims
 
-Run the release rehearsal from the merged `main` commit and let it open the evidence pull request:
+Run the release rehearsal from the merged `main` commit:
 
 ```bash
 gh workflow run live.yml --ref main -f record=true
 gh run watch
 ```
 
-The `live` workflow runs the release matrix against MySQL and Redis, every provider probe, the headless sign-ins, and the client flows against the served legs, and, when every row passes on a clean tree, renders the receipt into the [client compatibility reference](client-compatibility.md) and opens a pull request on an `evidence/<sha>-<run id>` branch, so a recording that failed part way can be dispatched again without deleting a branch by hand. `scripts/live/README.md` lists the rows and what each proves. A run with a failed or blocked row opens nothing; fix the cause and run it again.
+The `live` workflow runs the release matrix against MySQL and Redis, every provider probe, the headless sign-ins, and the client flows against the served legs, and, when dispatched with `record=true` from `main`, records the passing receipt as release evidence and uploads it as the `evidence-<sha>` artifact.
 
-Record the completed export rows and the commit used for the release-matrix run in the [public export evidence table](client-compatibility.md#public-export-live-evidence): the workflow's `record` job writes them from the receipt's `release-matrix` row. The rehearsal drives Claude Code and Codex CLI itself, against the Cloudflare Access and Entra legs, and the `record` job writes their rows from the same receipt. For a client it does not drive (the ChatGPT and claude.ai connectors, and any client against the Google leg, whose sign-in still needs a person), complete the matching Tier 3 row by hand after the source and package gates pass, on the same evidence branch, in the [client compatibility reference](client-compatibility.md#current-matrix).
 
 Do not use a live result as the only evidence for a security property.
 
@@ -67,19 +66,20 @@ pnpm run check:release-matrix
 pnpm run check:release-ready
 ```
 
-The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, stale evidence commit, or version mismatch.
+The commands name a malformed matrix row, non-ancestor runtime commit, missing export row, or stale evidence commit. Neither reads a version out of a document: tag and package agreement is checked at publish time against the tag you push, in step 1 below.
 
-A row goes stale against the release commit when something it depends on changed, and two kinds of row depend on different things. A row the record run renders, and every export row, came out of the harness, so a change under `test/`, `scripts/live/`, the release-matrix scripts, `docs/verification.md`, or `.github/workflows/live.yml` ages it, and the next record run re-proves it. A row an operator recorded by driving a real client against a served leg came out of none of that code: it ages when `src/`, `examples/`, the TypeScript configuration, the lockfiles, the publish workflow, or a runtime field of `package.json` changes, because those are what a client would observe. It ages too when the leg's own composition changes, which is `scripts/live/run.sh`, `scripts/live/serve.sh`, and `scripts/live/run-support.mjs`: those choose the entry point, map the environment onto the example's identity selector, DCR mode, redirect allowlist and proxy trust, and expose the hostname, so a change there changes what any client observes without touching `src/`. Which kind a row is comes from its own `Recorded by` cell, `rehearsal` or `operator`, written when the row is recorded and never inferred from the row's wording: a rendered row whose text changes must not quietly become an operator's. Any other value fails the row, so an unreadable cell ages strictly rather than loosely. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
+A receipt goes stale when something that changes what a client would observe moved after its commit: `src/`, `examples/`, the TypeScript configuration, the lockfiles, the publish workflow, a runtime field of `package.json`, or the composition of the leg a client is driven against, which is `scripts/live/run.sh`, `scripts/live/serve.sh`, and `scripts/live/run-support.mjs`. The code that produces a receipt ages that receipt and no other. A change under `test/`, `scripts/live/`, the release-matrix scripts, `docs/verification.md`, or `.github/workflows/live.yml` ages `rehearsal.json`, so landing one means dispatching a recorded run before the tag; one dispatch rewrites it. It never ages `operator.json`, which records what a real client did against a served leg and which no probe produced. For stale evidence, the default output shows changed-input counts and categories. Run `pnpm run check:release-ready --verbose` to list every changed input. Do not create the tag while either command fails.
 
 ## Merge the evidence record
 
-1. Commit only `docs/client-compatibility.md` on the evidence branch. The workflow's `record` job does this and opens the pull request; close and reopen that pull request once so the hosted checks start, because a branch pushed by the workflow token starts none on its own.
-2. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
-3. Read every review and inline thread.
-4. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
-5. Merge the evidence pull request into `main`.
-6. Fetch `origin/main` and run `pnpm run check:release-matrix` and `pnpm run check:release-ready` on that exact commit.
-7. Confirm that the commit selected for the tag is on `origin/main`. Do not tag an unmerged branch or a local-only commit.
+1. Commit the receipt under `docs/evidence/` from the `evidence-<sha>` artifact, and open the pull request from an account rather than a workflow token.
+2. Update [`docs/client-compatibility.md`](client-compatibility.md) in the same pull request. Nothing generates it, so nothing will notice it going stale: `record-receipt.mjs` prints what the campaign observed, in the words that page uses, and the receipt is the source for the runtime commit and the client versions.
+3. Wait for the hosted `typecheck · lines · test · build` and `process-guard` checks to pass on that commit.
+4. Read every review and inline thread.
+5. Confirm that the Codex review contains `Reviewed commit: <head sha>` for the pull request's current head. A reaction or an older review does not satisfy this step.
+6. Merge the pull request that adds the receipt into `main`.
+7. Fetch `origin/main` and run `pnpm run check:release-matrix` and `pnpm run check:release-ready` on that exact commit.
+8. Confirm that the commit selected for the tag is on `origin/main`. Do not tag an unmerged branch or a local-only commit.
 
 ## Verify the publish controls
 
@@ -92,7 +92,7 @@ A row goes stale against the release commit when something it depends on changed
 
 ## Publish
 
-1. Confirm that the tag is `v${package.version}`.
+1. Confirm that the tag is `v${package.version}`. `.github/workflows/publish.yml` re-checks this in its `build` job and fails the run before any install, build, pack, or publish step, so a mismatched tag cannot reach npm. Confirming it here avoids a failed run and a tag you then have to delete and re-push.
 2. Push the tag. Do not create the GitHub Release first.
 3. Confirm that the build job creates one tarball and one SHA-256 file.
 4. Confirm that the OIDC job publishes that digest-verified tarball without a checkout, dependency installation, or repository scripts.

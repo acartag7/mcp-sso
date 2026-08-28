@@ -569,7 +569,7 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(cliProbe, /existsSync\(join\(home, KEYCHAIN_STORE\)\)/, "the private keychain is proved reached");
   assert.match(cliProbe, /NOTE  tool call skipped/, "a skipped tool call is recorded, never silent");
   // The receipt has to keep those NOTE lines and the records have to say so:
-  // the renderer reads the client version out of them, and a record that
+  // the recorder reads the client version out of them, and a record that
   // promised only PASS/FAIL/CONTROL described a receipt nothing could record.
   assert.match(REHEARSAL_SUPPORT, /\(PASS\|FAIL\|CONTROL\|NOTE\)/, "the classifier keeps NOTE lines");
   for (const [name, record] of [["README", README], ["harness reference", DOC]]) {
@@ -600,10 +600,10 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(README, /MCP_SSO_CLIENT_KEYS_FILE/);
   // The evidence record is rendered only from a passing receipt and checked
   // with the gate's parser; the writing job and the credentialed job are split.
-  const renderer = read("scripts/live/render-evidence.mjs");
-  assert.match(renderer, /receipt\.evidence !== true/, "a receipt that is not evidence is refused");
-  assert.match(renderer, /expectedRows\.filter\(/, "the row set is re-derived, never taken from the receipt's own summary");
-  assert.match(renderer, /rows\.filter\(\(row\) => row\?\.status !== "PASS"\)/, "every row's status is checked, not the evidence flag alone");
+  const recorder = read("scripts/live/record-receipt.mjs");
+  assert.match(recorder, /receipt\.evidence !== true/, "a receipt that is not evidence is refused");
+  assert.match(recorder, /expectedRows\.filter\(/, "the row set is re-derived, never taken from the receipt's own summary");
+  assert.match(recorder, /rows\.filter\(\(row\) => row\?\.status !== "PASS"\)/, "every row's status is checked, not the evidence flag alone");
   const orchestrator = read("scripts/live/rehearsal.mjs");
   assert.match(orchestrator, /if \(await stopServing\(serving, servedSecrets\)\)/, "a served leg that printed a credential fails the run after shutdown");
   assert.match(orchestrator, /servedSecrets\.delete\(servedTunnel\)/, "the tunnel id the harness handed serve.sh is not evidence of a leak");
@@ -611,8 +611,8 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   assert.match(orchestrator, /receipt\.treeChanged = /, "a checkout that moved or was written to while the run went is never evidence");
   assert.match(orchestrator, /const tail = Math\.max\(MIN_SCAN_TAIL, \.\.\.\[\.\.\.secrets\]\.map\(\(value\) => value\.length\)\)/,
     "and the scan tail is the longest value actually collected, not a constant");
-  assert.match(renderer, /does not name the \$\{row\.version\} version its rows ran/,
-    "a CLI row is not rendered unless the receipt names the version it observed");
+  assert.match(recorder, /line\?\.kind === "NOTE"/,
+    "what a row observed, the client version among it, is recorded rather than summarised away");
   assert.match(orchestrator, /for \(const state of \[running, serving\]\) \{[\s\S]{0,160}state\.stopping = stopChild\(state, 5_000\)/,
     "an interrupt stops each child the one bounded way, and keeps the stop");
   assert.match(orchestrator, /await running\?\.stopping;[\s\S]{0,300}await serving\?\.stopping;/,
@@ -687,21 +687,31 @@ test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep
   }
   assert.match(orchestrator, /childEnv\(\{ \.\.\.env, \.\.\.serve\.env, MCP_SSO_TUNNEL: tunnel, TMPDIR: scratchDir \}\)/,
     "the tunnel connector least of all, and its configuration is written in the directory the run owns");
-  assert.match(workflow, /BRANCH="evidence\/\$\{SHORT\}-\$\{GITHUB_RUN_ID\}"/,
-    "each recording attempt writes its own evidence branch, so a retry never needs a branch deleted by hand");
-  assert.match(renderer, /evaluateReleaseReadiness\(/, "the gate's own parser checks the rendering before it is written");
-  assert.ok(renderer.indexOf("evaluateReleaseReadiness(") < renderer.indexOf("writeFileSync(compatibilityPath"), "checked before written");
+  // The recording job used to push a branch and open a pull request, which it
+  // could not do: Actions cannot create one in this repository. It now uploads
+  // the document and a person commits it, so the job needs no write token.
+  assert.match(workflow, /name: evidence-\$\{\{ github\.sha \}\}/, "the evidence document leaves as an artifact");
+  assert.doesNotMatch(workflow, /gh pr create/, "the job does not try to open a pull request");
+  assert.doesNotMatch(workflow, /pull-requests: write/, "and holds no permission to");
+  const recordJob = workflow.slice(workflow.indexOf("  record:"));
+  assert.doesNotMatch(recordJob, /contents: write/, "the recording job writes nothing to the repository");
+  // The recorder writes data the gate reads, so the two agree by schema rather
+  // than by the recorder re-running the gate on its own output. That agreement
+  // is pinned where it can actually fail: test/live-record-receipt.test.mjs
+  // evaluates the committed receipts through evaluateReleaseReadiness.
+  const recorderTest = read("test/live-record-receipt.test.mjs");
+  assert.match(recorderTest, /evaluateReleaseReadiness\(/, "what the recorder writes is checked against the gate");
   const jobs = workflow.split(/^  record:$/m);
   assert.equal(jobs.length, 2, "one record job");
   assert.doesNotMatch(jobs[0].slice(jobs[0].indexOf("  rehearse:")), /contents: write|pull-requests: write/, "the rehearsal job holds no write token");
   assert.doesNotMatch(jobs[1], /environment:|configure-aws-credentials/, "the record job holds no AWS role");
-  assert.doesNotMatch(jobs[1], /pnpm install|pnpm\/action-setup/, "the job with the write token installs no third-party code");
+  assert.doesNotMatch(jobs[1], /pnpm install|pnpm\/action-setup/, "the recording job installs no third-party code");
   assert.match(jobs[1], /persist-credentials: false/);
   assert.match(jobs[1], /--require-head/, "the record binds the receipt to the checked-out commit");
   assert.match(jobs[1], /if: github\.event_name == 'workflow_dispatch' && inputs\.record && github\.ref == 'refs\/heads\/main'/, "recording is opt-in and main only");
-  assert.match(jobs[1], /render-evidence\.mjs --receipt .* --write/);
-  assert.match(README, /render-evidence\.mjs/);
-  assert.match(DOC, /render-evidence\.mjs/);
+  assert.match(jobs[1], /record-receipt\.mjs --receipt .* --write/);
+  assert.match(README, /record-receipt\.mjs/);
+  assert.match(DOC, /record-receipt\.mjs/);
   assert.match(workflow, /cloudflared-linux-amd64/);
   assert.match(workflow, /sha256sum -c -/, "the connector binary is verified by digest before it runs");
   assert.match(workflow, /node scripts\/live\/ci\/install-tunnel\.mjs/);

@@ -94,7 +94,7 @@ export const BLOCKED_REASON_NAMES = Object.freeze([
 
 /** A probe's own report. `NOTE` carries what the row observed rather than what
  *  it checked — the client version a CLI row ran, the audit sequence, a skipped
- *  tool call — and the receipt has to keep it: `render-evidence.mjs` reads the
+ *  tool call — and the receipt has to keep it: `record-receipt.mjs` reads the
  *  client version from exactly these lines, and a driver row already records
  *  its trace as a NOTE. Only the other three kinds are checks, so every
  *  "did this row run any checks" decision counts those. */

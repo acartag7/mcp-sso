@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "./lib/release-ready.mjs";
@@ -26,11 +26,21 @@ function readJson(path, label) {
   }
 }
 
+function readReceipts(directory) {
+  let names;
+  try {
+    names = readdirSync(directory).filter((name) => name.endsWith(".json")).sort();
+  } catch {
+    console.error("release readiness failed:\n- cannot read docs/evidence/");
+    process.exit(1);
+  }
+  return Object.fromEntries(names.map((name) => [name, readJson(resolve(directory, name), `docs/evidence/${name}`)]));
+}
+
 const result = evaluateReleaseReadiness({
+  receipts: readReceipts(resolve(root, "docs/evidence")),
   packageJson: readJson(resolve(root, "package.json"), "package.json"),
   releaseMatrix: readJson(resolve(root, "test/release-matrix.json"), "test/release-matrix.json"),
-  compatibility: readFileSync(resolve(root, "docs/client-compatibility.md"), "utf8"),
-  status: readFileSync(resolve(root, "docs/verification-status.md"), "utf8"),
   gitCwd: root,
   releaseCommit: process.env.RELEASE_COMMIT ?? "HEAD",
 });
