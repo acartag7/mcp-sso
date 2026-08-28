@@ -191,12 +191,14 @@ export function writeActiveReceipt(path, body) {
  *  to check out origin/main and run again.
  *
  *  Fail closed: no reachable origin/main is a refusal, not a pass. */
-/** One campaign is one checkout. The rehearsal records the commit it ran at,
- *  but the rows a person drives run against whatever `serve.sh` is serving, so
- *  a checkout moved between the two would file those rows under a commit whose
- *  code they never exercised, and the gate would authorize the release on them.
- *  Writing evidence therefore requires the working tree to still be the commit
- *  the receipt names. */
+/** One campaign is one checkout, unmodified. The rehearsal records the commit
+ *  it ran at, but the rows a person drives run against whatever `serve.sh` is
+ *  serving, and `serve.sh` serves the working tree without asking whether it is
+ *  still that commit: `run.sh` checks the tree, `serve.sh` does not. So both a
+ *  moved checkout and an uncommitted edit would file those rows under code they
+ *  never exercised, the first under a different commit and the second under a
+ *  tree the receipt calls clean. Writing evidence requires the working tree to
+ *  be the commit the receipt names, with nothing on top of it. */
 export function assertRecordedAtHead(commit, { cwd = ROOT } = {}) {
   const head = execFileSync("git", ["-C", cwd, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
   if (head !== commit) {
@@ -204,6 +206,13 @@ export function assertRecordedAtHead(commit, { cwd = ROOT } = {}) {
       `the campaign ran at ${commit.slice(0, 7)} but the checkout is now ${head.slice(0, 7)}. ` +
       "The rows you drove ran against this checkout, not that commit. " +
       "Check that commit out again, or run the campaign again here.",
+    );
+  }
+  const modified = execFileSync("git", ["-C", cwd, "status", "--porcelain"], { encoding: "utf8" }).trim();
+  if (modified.length > 0) {
+    throw new Error(
+      `the working tree has uncommitted changes, so the rows you drove ran against something ${commit.slice(0, 7)} does not contain. ` +
+      "Revert them and drive the rows again, or run the whole campaign against a committed tree.",
     );
   }
   return commit;

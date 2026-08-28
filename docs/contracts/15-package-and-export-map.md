@@ -55,6 +55,27 @@ One campaign, not one per tool. The rows a probe drives and the rows a person dr
 
 The gate rejects a receipt whose schema it does not recognise, whose `runtimeCommit` is malformed, unresolvable, or not an ancestor of the release commit, or that claims rows it did not complete. It rejects a public export with no passing packed-artifact row covering it, an export-to-row pair absent from the release matrix, and a release-matrix row that is malformed, duplicated, or lacks executable evidence. `releaseMatrix` is accepted only when the receipt's own `release-matrix` row passed.
 
+**Receipt binding.** A receipt asserts that a set of rows passed against a particular tree. Everything that could make that assertion false is enumerated here, with where it is refused, because this class was discovered one review round at a time and the enumeration is what stops the next one.
+
+| What could be false | Refused by | Where |
+| --- | --- | --- |
+| The receipt names no commit, or not a commit | `runtimeCommit` is a 40-character hex sha | gate |
+| The commit is not in the repository | `git rev-parse --verify` | gate |
+| The tree that ran is not the commit named | `HEAD` equals `runtimeCommit` when writing | recorder |
+| Something was on top of that tree | working tree clean when writing | recorder |
+| The rehearsal itself ran dirty | the receipt's own `dirty` flag | recorder |
+| The commit will not survive the merge | ancestor of `origin/main` when writing | recorder |
+| The commit is not in the release | ancestor of the release commit | gate |
+| The code moved after the campaign | no evidence input changed between the two | gate |
+| A row did not pass | every row is `PASS` | gate and recorder |
+| A row is missing | every `ROWS` and `DRIVEN_ROWS` id present | gate and recorder |
+| A row was invented | no row outside those two sets | gate and recorder |
+| A person's word looks like a probe's | `driven: true` on every non-`ROWS` row | gate |
+| A person claims a row a probe decides | a `--row` naming a `ROWS` id is refused | recorder |
+| Coverage is claimed without the run that proves it | `releaseMatrix` needs a passing `release-matrix` row | gate |
+
+The recorder refuses at the moment of recording, where the fix is to run the campaign again; the gate refuses at release, where the fix is a new campaign. A property enforced only at the gate is one an operator discovers after merging.
+
 **Freshness.** A receipt is rejected when something that changes what a client would observe, or what produced the evidence, moved after its commit: `src/`, `examples/`, `test/`, `scripts/live/`, `scripts/run-release-matrix.mjs`, `scripts/check-release-matrix.mjs`, `scripts/lib/release-matrix-outcome.mjs`, `docs/verification.md`, `tsconfig.json`, `tsconfig.build.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.github/workflows/publish.yml`, or a runtime field of `package.json`. A `package.json` change that touches only `check:release-ready` or package-description metadata does not age a receipt.
 
 `package.json:version` does not age a receipt either, and this is what lets one pull request carry both the bump and the evidence for it. The version reaches a user in two places, and neither is exercised by driving a client against a served leg: `src/bin/init.ts` reads it to pin `mcp-sso` in the package.json that `mcp-sso init` generates, and it names the packed tarball. Nothing a client observes over the OAuth and MCP endpoints changes when the version string changes, while the bump is a step of every release, so ageing evidence on it would require re-running a campaign to prove that a number changed. Every other runtime field still ages a receipt, and so does every path above, so a release that changes anything a client could observe still requires a fresh campaign.

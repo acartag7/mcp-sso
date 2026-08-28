@@ -218,7 +218,7 @@ test("BEHAVIOUR record-receipt: a campaign recorded off the release line is refu
   }
 });
 
-test("BEHAVIOUR record-receipt: one campaign is one checkout", () => {
+test("BEHAVIOUR record-receipt: one campaign is one checkout, unmodified", () => {
   // The rehearsal records the commit it ran at, but the rows a person drives
   // run against whatever serve.sh is serving. A checkout moved in between would
   // file those rows under a commit whose code they never exercised, and the
@@ -234,6 +234,14 @@ test("BEHAVIOUR record-receipt: one campaign is one checkout", () => {
     git("commit", "-qm", "campaign");
     const campaign = git("rev-parse", "HEAD");
     assert.equal(assertRecordedAtHead(campaign, { cwd: dir }), campaign, "recording where the campaign ran is fine");
+
+    // An uncommitted edit is the same defect without moving HEAD: serve.sh
+    // serves the working tree and, unlike run.sh, never checks it.
+    writeFileSync(join(dir, "f"), "edited\n");
+    assert.throws(() => assertRecordedAtHead(campaign, { cwd: dir }), /uncommitted changes/,
+      "an edit on top of the campaign commit is refused");
+    writeFileSync(join(dir, "f"), "a\n");
+    assert.equal(assertRecordedAtHead(campaign, { cwd: dir }), campaign, "and reverting it is enough");
 
     git("commit", "--allow-empty", "-qm", "moved on");
     assert.throws(() => assertRecordedAtHead(campaign, { cwd: dir }), /but the checkout is now/,
