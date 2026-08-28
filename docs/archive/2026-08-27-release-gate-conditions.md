@@ -23,10 +23,12 @@ The current gate is [`scripts/lib/release-ready.mjs`](../../scripts/lib/release-
 | a matrix row repeats an export | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row claims exports without packedArtifact | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no executable evidence | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a receipt records a row the campaign does not define | Kept, and widened: the campaign is the rehearsal's rows plus the hand-driven checklist rows, both declared in `scripts/live/rehearsal-support.mjs`. Pinned in `test/release-gate-conditions.test.mjs` |
 | a receipt row has a wrongly typed id | New here rather than carried over: the id pattern was applied to `String(row.id)`, so a numeric id passed it and then failed every later comparison, which are all against strings. Pinned in `test/release-gate-conditions.test.mjs` |
 | the release matrix is not an object with a rows array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row has no RM.N id | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a matrix row omits its exports array | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
+| a receipt claims completeness while missing a hand-driven row | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 | a rehearsal receipt claims completeness while missing rows | `scripts/lib/release-ready.mjs`, pinned in `test/release-gate-conditions.test.mjs` |
 
 Evidence freshness is kept as it was, with one deliberate correction, and is pinned by its own case in the same file: runtime, deployment, package-exports, version and build-script changes age every receipt; the package description and the gate's own script do not; and probe or rehearsal changes age a rehearsal receipt but not an operator's.
@@ -66,7 +68,6 @@ Every one of these is a rule about Markdown rather than about evidence. They exi
 | table-shaped content outside the one rendered table | Applied to the provider and export tables, so that a `|` line in prose could not be read as evidence. Kept exactly where it still matters: the published-release version is read from that section's rendered table, and a row outside it supplies nothing. |
 | status version: malformed item label / malformed table row | Typography of the other rows in the status table. Nothing the gate decides depends on them, and the contract no longer claims otherwise. |
 | the published-release row is absent or repeated | The version claim is no longer read from prose. `publish.yml` compares the pushed tag against `package.json` before publishing, so agreement is enforced against the tag, not a restatement of it. |
-| a receipt records a row the rehearsal does not define | Evidence became one campaign rather than one per tool. The rows a person drives against a served leg, which no probe can drive, are recorded in the same receipt, so a row the rehearsal does not define is expected. The automated set is still a floor: a receipt missing any row the rehearsal runs is still refused. |
 | the published-release row disagrees with itself, with the package, or appears twice in any Markdown spelling | Seven rounds of Markdown shapes, one per review: closing hashes, blockquotes, indentation, Setext underlines, a lone pipe line, an unclosed fence, a raw HTML block. Hand-rolling a Markdown parser over a document anyone may edit has no last edge case. |
 
 ## What replaced them

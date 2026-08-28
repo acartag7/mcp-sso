@@ -3,7 +3,7 @@
 // release matrix, and refuses a release whose evidence does not match what
 // ships. It parses no prose. docs/client-compatibility.md is written for
 // readers, and nothing here reads it.
-import { ROWS } from "../live/rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS } from "../live/rehearsal-support.mjs";
 import { changedEvidenceInputs, isAncestor, resolveCommit } from "./release-evidence-git.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
@@ -30,10 +30,13 @@ function readReceipt(receipt, label, errors) {
   // truncated to its release-matrix row would otherwise cover every export
   // while the identity and client evidence was gone. Rows a person drives are
   // additional, so the automated set is a floor, not the whole receipt.
-  const expected = new Set(ROWS.map((row) => row.id));
+  // Both halves of the campaign: the rows a probe checked, and the rows only a
+  // person can drive. Without the second the gate would authorize a release on
+  // the automated half alone, with no Google sign-in and no hosted connector.
+  const expected = new Set([...ROWS.map((row) => row.id), ...DRIVEN_ROWS]);
   const ids = new Set((Array.isArray(receipt.rows) ? receipt.rows : []).map((row) => row?.id));
   const missing = [...expected].filter((id) => !ids.has(id));
-  if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the rehearsal runs`);
+  if (missing.length > 0) return fail(`claims to be complete without ${missing.length} row(s) the campaign runs: ${missing.slice(0, 5).join(", ")}`);
   const seen = new Set();
   for (const row of receipt.rows) {
     // typeof before the pattern: String(123) matches it, and a numeric id then
@@ -42,6 +45,10 @@ function readReceipt(receipt, label, errors) {
       return fail("has a row with no readable id");
     }
     if (seen.has(row.id)) return fail(`repeats row ${row.id}`);
+    // Unknown is refused, not counted. Now that both halves of the campaign
+    // declare their rows, a readable id outside them is not a checklist row,
+    // and counting it would let a receipt stand in for one never driven.
+    if (!expected.has(row.id)) return fail(`records ${row.id}, which the campaign does not define`);
     seen.add(row.id);
     if (row.status !== "PASS") return fail(`row ${row.id} did not pass (${String(row.status)})`);
   }

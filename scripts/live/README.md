@@ -110,10 +110,11 @@ The client rows run against legs the rehearsal brings up itself through `serve.s
 ### Recording a passing receipt
 
 ```sh
-node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json --row C1 --row F2 --write
+node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
+  --row A3 --row B3 --row C1 --row C2 --row F1 --row F2 --row F3 --write
 ```
 
-`record-receipt.mjs` turns a receipt whose every row passed on a clean tree into the release evidence the gate reads: `docs/evidence/release.json`, naming the runtime commit, every row and its status, and the release-matrix rows the run proved. Each `--row` adds a row you drove yourself and that passed, for the hosted connectors no probe can drive; naming a row the rehearsal already checked is refused, because the recorder does not take a person's word for what a probe decides. It re-derives completeness from the receipt's own rows rather than trusting the receipt to summarise itself, so a partial run, a dirty tree, or a failed row is refused and nothing is written.
+`record-receipt.mjs` turns a receipt whose every row passed on a clean tree into the release evidence the gate reads: `docs/evidence/release.json`, naming the runtime commit, every row and its status, and the release-matrix rows the run proved. Each `--row` adds a row you drove yourself and that passed. `DRIVEN_ROWS` in `rehearsal-support.mjs` declares the seven the rehearsal may not drive, A3, B3, C1, C2, and F1 to F3, and all seven are required: recording fewer is refused, and so is a row the rehearsal already checked or a row outside that set. It re-derives completeness from the receipt's own rows rather than trusting the receipt to summarise itself, so a partial run, a dirty tree, or a failed row is refused and nothing is written.
 
 `check:release-ready` reads that document and no prose: [`docs/client-compatibility.md`](../../docs/client-compatibility.md) is written for readers. A new campaign supersedes the one before it, which moves to `docs/evidence/archive/`.
 

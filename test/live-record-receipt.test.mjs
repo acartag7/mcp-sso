@@ -10,7 +10,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { evaluateReleaseReadiness } from "../scripts/lib/release-ready.mjs";
 import { assertClientVersions, provenMatrixRows, readRehearsalReceipt, toEvidence, writeActiveReceipt } from "../scripts/live/record-receipt.mjs";
-import { ROWS } from "../scripts/live/rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS } from "../scripts/live/rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const COMMIT = "a".repeat(40);
@@ -135,10 +135,10 @@ test("BEHAVIOUR record-receipt: the first receipt is staged too, so a failed wri
 });
 
 test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => {
-  const evidence = toEvidence(readRehearsalReceipt(receiptFor()), { source: "https://example.invalid/run" });
+  const evidence = toEvidence(readRehearsalReceipt(receiptFor()), { source: "https://example.invalid/run", driven: [...DRIVEN_ROWS] });
   assert.equal(evidence.schema, 1);
   assert.equal(evidence.complete, true);
-  assert.equal(evidence.rows.length, ROWS.length);
+  assert.equal(evidence.rows.length, ROWS.length + DRIVEN_ROWS.length);
   assert.ok(evidence.rows.every((row) => ["id", "status", "observed"].includes(Object.keys(row)[0]) && row.id && row.status));
 
   // A CLI row's client version is an observation, and the record keeps it.
@@ -146,7 +146,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   withVersion.rows.find((r) => r.id === "claude-code:entra").lines = [
     { kind: "NOTE", text: "claude 2.1.247" }, { kind: "PASS", text: "not an observation" },
   ];
-  const recorded = toEvidence(readRehearsalReceipt(withVersion));
+  const recorded = toEvidence(readRehearsalReceipt(withVersion), { driven: [...DRIVEN_ROWS] });
   assert.deepEqual(recorded.rows.find((r) => r.id === "claude-code:entra").observed, ["claude 2.1.247"],
     "the version the run observed reaches the record, and a check line does not");
 
@@ -157,7 +157,7 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
   // it: dropping releaseMatrix from toEvidence must fail here rather than leave
   // the recorder producing a document nothing accepts.
   const head = execFileSync("git", ["-C", ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-  const generated = toEvidence(readRehearsalReceipt(receiptFor({ runtimeCommit: head })), { driven: ["C1", "F2"] });
+  const generated = toEvidence(readRehearsalReceipt(receiptFor({ runtimeCommit: head })), { driven: [...DRIVEN_ROWS] });
   const accepted = evaluateReleaseReadiness({
     packageJson: { version: "0.5.0", exports: { ".": {} } },
     releaseMatrix: { rows: [{ id: "RM.1", title: "Root", packedArtifact: true, exports: ["."], evidence: [{ file: "test/a.test.ts", name: "a" }] }] },
@@ -165,13 +165,22 @@ test("BEHAVIOUR record-receipt: what it writes is what the gate accepts", () => 
     gitCwd: ROOT, releaseCommit: "HEAD",
   });
   assert.deepEqual(accepted.errors, [], "the gate accepts exactly what the recorder writes, hand-driven rows included");
-  assert.deepEqual(generated.rows.filter((row) => row.driven).map((row) => row.id), ["C1", "F2"],
+  assert.deepEqual(generated.rows.filter((row) => row.driven).map((row) => row.id), [...DRIVEN_ROWS],
     "and the rows a person drove are in the same document, marked as driven");
+
+  // A campaign that skipped the hosted connectors is not a campaign: without
+  // this the gate would authorize a release on the automated half alone.
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: [] }),
+    /missing 7 hand-driven row\(s\)/, "no hand-driven rows is not a complete campaign");
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: DRIVEN_ROWS.slice(1) }),
+    /missing 1 hand-driven row\(s\): A3/, "and neither is a partial one");
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: [...DRIVEN_ROWS, "F2s"] }),
+    /not a hand-driven checklist row/, "an invented row cannot stand in for one that was never driven");
 
   // A hand-driven row cannot restate a machine-checked one: that would record a
   // person's word for something a probe already decides.
-  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["release-matrix"] }),
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["release-matrix", ...DRIVEN_ROWS] }),
     /machine-checked/, "a machine-checked row cannot be claimed by hand");
-  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["C1", "C1"] }),
+  assert.throws(() => toEvidence(readRehearsalReceipt(receiptFor()), { driven: ["C1", ...DRIVEN_ROWS] }),
     /named twice/, "and a hand-driven row cannot be named twice");
 });

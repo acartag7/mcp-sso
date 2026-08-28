@@ -68,6 +68,12 @@ const CONDITIONS = [
   ["a receipt row has a wrongly typed id",
     () => ({ receipts: receipts(receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: 123, status: "PASS" }] })) }),
     "has a row with no readable id"],
+  ["a receipt records a row the campaign does not define",
+    () => ({ receipts: receipts(receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "F2s", status: "PASS" }] })) }),
+    "records F2s, which the campaign does not define"],
+  ["a receipt claims completeness while missing a hand-driven row",
+    () => ({ receipts: receipts(receiptFor(ancestor, { rows: receiptFor(ancestor).rows.filter((row) => row.id !== "C1") })) }),
+    "without 1 row(s) the campaign runs: C1"],
   ["a rehearsal receipt claims completeness while missing rows",
     () => ({ receipts: receipts(receiptFor(ancestor, { rows: [{ id: "release-matrix", status: "PASS" }] })) }),
     "claims to be complete without"],
@@ -88,7 +94,7 @@ test("every substantive condition the previous gate refused is still refused", (
     if (!errors.some((error) => error.includes(expected))) missed.push(`${name} → ${JSON.stringify(errors)}`);
   }
   assert.deepEqual(missed, [], `conditions no longer refused:\n${missed.join("\n")}`);
-  assert.equal(CONDITIONS.length, 20, "the enumeration is the record; adding a check adds a row here");
+  assert.equal(CONDITIONS.length, 22, "the enumeration is the record; adding a check adds a row here");
 });
 
 test("evidence ages as it did, plus the correction that lets one pull request carry both", () => {
@@ -115,7 +121,6 @@ test("what was dropped is recorded, with the reason it stopped being needed", ()
     "canonical level-two headings", "fenced blocks", "HTML comments", "raw angle-bracket markup",
     "malformed divider", "noncanonical Markdown", "Recorded by", "evidence digest",
     "the published-release row is absent or repeated", "raw HTML block",
-    "records a row the rehearsal does not define",
   ]) {
     assert.ok(archive.includes(dropped), `the archive records dropping ${dropped}`);
   }

@@ -31,9 +31,11 @@ test("a receipt is rejected when it is not evidence", () => {
     [{ schema: 2 }, "unrecognised schema 2"],
     [{ runtimeCommit: "nope" }, "runtime commit is malformed"],
     [{ rows: [] }, "records no rows"],
-    [{ rows: [...rows, { id: "F2", status: "FAIL" }] }, "row F2 did not pass"],
-    [{ rows: [...rows, { id: "F2", status: "PASS" }, { id: "F2", status: "PASS" }] }, "repeats row F2"],
+    [{ rows: rows.map((row) => (row.id === "F2" ? { ...row, status: "FAIL" } : row)) }, "row F2 did not pass"],
+    [{ rows: [...rows, { id: "F2", status: "PASS" }] }, "repeats row F2"],
     [{ rows: [...rows, { id: "", status: "PASS" }] }, "has a row with no readable id"],
+    [{ rows: [...rows, { id: "F2s", status: "PASS" }] }, "records F2s, which the campaign does not define"],
+    [{ rows: rows.filter((row) => row.id !== "C1") }, "without 1 row(s) the campaign runs: C1"],
     [{ releaseMatrix: ["RM.1", "not a row id!"] }, "names release-matrix rows that are not readable ids"],
   ];
   for (const [override, expected] of cases) {
@@ -48,8 +50,10 @@ test("a receipt is rejected when it is not evidence", () => {
 test("one campaign, so a second active document is a superseded one left behind", () => {
   // Rows a person drove ride in the same receipt as the machine-checked ones,
   // because they were driven in the same campaign against the same commit.
-  const together = receiptFor(ancestor, { rows: [...receiptFor(ancestor).rows, { id: "F2", status: "PASS", driven: true }] });
-  assert.deepEqual(fixture({ receipts: receipts(together) }).errors, [], "hand-driven rows are evidence in the one receipt");
+  const rows = receiptFor(ancestor).rows;
+  assert.ok(rows.some((row) => row.id === "F2" && row.driven), "the fixture campaign carries the hand-driven rows");
+  assert.deepEqual(fixture({ receipts: receipts(receiptFor(ancestor)) }).errors, [],
+    "machine-checked and hand-driven rows are evidence in the one receipt");
 
   const stray = { ...receipts(), "operator.json": receiptFor(ancestor) };
   assert.ok(fixture({ receipts: stray }).errors.some((e) => e.includes("docs/evidence/operator.json is not the active receipt")),

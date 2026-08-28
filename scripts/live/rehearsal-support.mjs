@@ -21,6 +21,15 @@ const cli = (id, leg, which, serve) => ({ id, kind: "client", entry: CLI, leg, e
  *  `expect`; a row that `provides` something hands its result file to the
  *  later row that `needs` it; a `client` row runs against a leg serve.sh
  *  exposes for the rows that share its `serve` generation. */
+/** The rows of scripts/live/CHECKLIST.md that no probe may drive: the Google
+ *  identity sign-ins (A3, B3) and the hosted connectors (C1, C2, F1 to F3),
+ *  whose web applications an automated browser may not drive under their terms
+ *  of service. A campaign is not complete until a person has driven every one
+ *  of them, and the release gate requires all of them present and passing. A
+ *  row outside this set is not a checklist row, so recording one is refused
+ *  rather than counted. */
+export const DRIVEN_ROWS = Object.freeze(["A3", "B3", "C1", "C2", "F1", "F2", "F3"]);
+
 export const ROWS = Object.freeze([
   { id: "release-matrix", kind: "command", command: ["pnpm", "run", "test:release"], env: {} },
   { id: "probe-entra", kind: "probe", entry: "scripts/live/probe-entra.mjs", leg: "entra", env: {} },

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateReleaseReadiness } from "../../scripts/lib/release-ready.mjs";
-import { ROWS } from "../../scripts/live/rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS } from "../../scripts/live/rehearsal-support.mjs";
 
 let repo;
 export let ancestor;
@@ -29,7 +29,11 @@ function git(args) {
 export function receiptFor(commit, overrides = {}) {
   return {
     schema: 1, runtimeCommit: commit, recordedAt: "2026-08-27T00:00:00.000Z",
-    complete: true, rows: ROWS.map((row) => ({ id: row.id, status: "PASS" })),
+    complete: true,
+    rows: [
+      ...ROWS.map((row) => ({ id: row.id, status: "PASS" })),
+      ...DRIVEN_ROWS.map((id) => ({ id, status: "PASS", driven: true })),
+    ],
     releaseMatrix: ["RM.1", "RM.2"],
     ...overrides,
   };

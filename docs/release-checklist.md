@@ -50,7 +50,7 @@ Still on that clean `origin/main` checkout.
 
 ## Record the campaign
 
-The rehearsal checks every row it defines. The rest of [`scripts/live/CHECKLIST.md`](../scripts/live/CHECKLIST.md), which is the hosted connectors and the CLI rows the rehearsal does not cover, you drive yourself against the same served leg, in the same sitting, against the same commit.
+The rehearsal checks its 19 rows. Seven rows of [`scripts/live/CHECKLIST.md`](../scripts/live/CHECKLIST.md) it may not drive, because their web applications forbid an automated browser: the Google sign-ins A3 and B3, and the hosted connectors C1, C2, and F1 to F3. You drive those yourself, against the same served leg, in the same sitting, against the same commit.
 
 ```bash
 docker run -d --rm --name rehearsal-mysql -e MYSQL_ROOT_PASSWORD=rootpw -e MYSQL_DATABASE=mcp_sso -e MYSQL_USER=mcp -e MYSQL_PASSWORD=mcppw -p 127.0.0.1:3306:3306 mysql:8.4
@@ -60,15 +60,15 @@ node scripts/live/rehearsal.mjs
 
 `rehearsal.mjs` brings up each leg through `serve.sh`, runs its 19 rows, and writes `.live-state/receipt.json`. It exits 0 only when every row passed on a clean tree.
 
-Then drive the remaining checklist rows yourself and record the campaign as one document naming each one you drove:
+Then drive the seven rows no probe may drive and record the campaign as one document naming each:
 
 ```bash
 node scripts/live/record-receipt.mjs --receipt .live-state/receipt.json \
-  --row C1 --row C2 --row F1 --row F2 --row F3 --write
+  --row A3 --row B3 --row C1 --row C2 --row F1 --row F2 --row F3 --write
 ```
 
 > [!IMPORTANT]
-> A `--row` names a row you drove and that passed. A row you did not drive is left out, and a row the rehearsal already checked is refused: the recorder will not take your word for something a probe decides.
+> A `--row` names a row you drove and that passed. All seven are required, because they are the whole of what no probe may drive: the Google sign-ins A3 and B3, and the hosted connectors C1, C2, and F1 to F3. Recording fewer is refused, and so is a row the rehearsal already checked or a row that is not on the checklist at all.
 
 `record-receipt.mjs` writes `docs/evidence/release.json` naming the `origin/main` commit you are standing on, moves the receipt it supersedes to `docs/evidence/archive/`, and prints what the campaign observed in the words [`docs/client-compatibility.md`](client-compatibility.md) uses.
 

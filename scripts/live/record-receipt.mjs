@@ -11,7 +11,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ROWS } from "./rehearsal-support.mjs";
+import { DRIVEN_ROWS, ROWS } from "./rehearsal-support.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 
@@ -83,8 +83,15 @@ export function toEvidence(receipt, { source, driven = [] } = {}) {
   const machineChecked = new Set(receipt.rows.map((row) => row.id));
   for (const id of driven) {
     if (machineChecked.has(id)) throw new Error(`row ${id} is machine-checked; it cannot also be recorded by hand`);
+    // Unknown is refused, not counted: a readable id that is not a checklist
+    // row would otherwise stand in for one that was never driven.
+    if (!DRIVEN_ROWS.includes(id)) throw new Error(`row ${id} is not a hand-driven checklist row (${DRIVEN_ROWS.join(", ")})`);
   }
   if (new Set(driven).size !== driven.length) throw new Error("a hand-driven row is named twice");
+  const undriven = DRIVEN_ROWS.filter((id) => !driven.includes(id));
+  if (undriven.length > 0) {
+    throw new Error(`the campaign is missing ${undriven.length} hand-driven row(s): ${undriven.join(", ")}`);
+  }
   return {
     schema: 1,
     runtimeCommit: receipt.runtimeCommit,
