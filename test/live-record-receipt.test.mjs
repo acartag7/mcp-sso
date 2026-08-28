@@ -3,7 +3,7 @@
 // document it writes is one the gate accepts.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -108,6 +108,22 @@ test("BEHAVIOUR record-receipt: a campaign supersedes the one before it, and a f
     }
     assert.equal(readFileSync(path, "utf8"), before, "the active receipt is untouched");
     assert.equal(existsSync(`${path}.staged`), false, "and no staged file is left behind");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("BEHAVIOUR record-receipt: the first receipt is staged too, so a failed write cannot truncate it", () => {
+  // The active receipt is only ever created by a rename. A direct write to it
+  // can fail part-way and leave a truncated document that every later gate run
+  // fails to parse, and there is no previous receipt to roll back to.
+  const dir = mkdtempSync(join(tmpdir(), "mcp-sso-receipt-"));
+  try {
+    const path = join(dir, "rehearsal.json");
+    // Staging cannot succeed, so nothing may reach the active receipt.
+    mkdirSync(`${path}.staged`);
+    assert.throws(() => writeActiveReceipt(path, "{}\n"), "a failed staging fails the recording");
+    assert.equal(existsSync(path), false, "and the active receipt was never written directly");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

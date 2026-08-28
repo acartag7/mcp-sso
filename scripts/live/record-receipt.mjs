@@ -111,34 +111,38 @@ const invokedAsMain = () => {
 export function writeActiveReceipt(path, body) {
   const staged = `${path}.staged`;
   mkdirSync(dirname(path), { recursive: true });
-  if (!existsSync(path)) {
-    writeFileSync(path, body);
-    return null;
-  }
-  // Every superseded receipt is archived, including one from a second campaign
-  // against the same commit: it carries its own timestamp, source and
-  // observations, and overwriting it would discard a campaign that ran.
-  const previous = JSON.parse(readFileSync(path, "utf8"));
-  const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
-  const base = `rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
-  const archiveDir = resolve(dirname(path), "archive");
-  mkdirSync(archiveDir, { recursive: true });
-  // A repeated recording of the same artifact produces the same name. The file
-  // already there is a campaign that ran, so the new one takes a free name
-  // rather than replacing it: renameSync would delete it silently.
-  let archive = resolve(archiveDir, `${base}.json`);
-  for (let n = 2; existsSync(archive); n++) archive = resolve(archiveDir, `${base}-${n}.json`);
-  // Write the replacement first: a failure here leaves the active receipt where
-  // it was. Moving first and then failing to write would leave the repository
-  // with no active receipt and a gate that refuses everything.
+  // Both branches stage first. A direct write to the active receipt can fail
+  // part-way and leave a truncated document, which every later gate run then
+  // fails to parse: a recording that fails must leave the evidence set as it
+  // was, whether or not there was one to supersede.
   //
-  // Every exit from the sequence, not only the one that fails most visibly: a
-  // partial staged write, a failed archive move, a failed activation, and a
-  // failed restore all leave `staged` behind, and an untracked file there makes
-  // the next rehearsal record a dirty tree and refuse itself as evidence. The
-  // finally covers all four.
+  // Every exit from the sequence leaves `staged` behind otherwise, and an
+  // untracked file there makes the next rehearsal record a dirty tree and
+  // refuse itself as evidence. The finally covers all of them: a partial
+  // staged write, a failed first activation, a failed archive move, a failed
+  // replacement activation, and a failed restore.
   try {
     writeFileSync(staged, body);
+    if (!existsSync(path)) {
+      renameSync(staged, path);
+      return null;
+    }
+    // Every superseded receipt is archived, including one from a second
+    // campaign against the same commit: it carries its own timestamp, source
+    // and observations, and overwriting it would discard a campaign that ran.
+    const previous = JSON.parse(readFileSync(path, "utf8"));
+    const stamp = String(previous.recordedAt ?? "").replace(/[^0-9A-Za-z]/g, "").slice(0, 14) || "undated";
+    const base = `rehearsal-${String(previous.runtimeCommit).slice(0, 7)}-${stamp}`;
+    const archiveDir = resolve(dirname(path), "archive");
+    mkdirSync(archiveDir, { recursive: true });
+    // A repeated recording of the same artifact produces the same name. The
+    // file already there is a campaign that ran, so the new one takes a free
+    // name rather than replacing it: renameSync would delete it silently.
+    let archive = resolve(archiveDir, `${base}.json`);
+    for (let n = 2; existsSync(archive); n++) archive = resolve(archiveDir, `${base}-${n}.json`);
+    // Move the active receipt aside only once the replacement is on disk.
+    // Moving first and then failing to write would leave the repository with
+    // no active receipt and a gate that refuses everything.
     renameSync(path, archive);
     try {
       renameSync(staged, path);
@@ -154,10 +158,10 @@ export function writeActiveReceipt(path, body) {
       }
       throw error;
     }
+    return archive;
   } finally {
-    rmSync(staged, { force: true });
+    rmSync(staged, { force: true, recursive: true });
   }
-  return archive;
 }
 
 if (invokedAsMain()) {
