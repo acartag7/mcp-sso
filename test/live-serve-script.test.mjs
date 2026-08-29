@@ -28,7 +28,7 @@ function waitForExit(child, label) {
 }
 function waitForFile(path) {
   return new Promise((resolve, reject) => {
-    const deadline = Date.now() + 8_000;
+    const deadline = Date.now() + 15_000;
     const poll = () => {
       if (existsSync(path)) return resolve();
       if (Date.now() >= deadline) return reject(new Error(`timed out waiting for ${path}`));
@@ -186,21 +186,40 @@ exit 0
       TUNNEL_CONFIG_COPY: tunnelConfig, RELEASE_TUNNEL: releaseTunnel,
       TUNNEL_START_DELAY: mode === "steal-while-serving" ? "2" : "",
       CLOUDFLARED_MODE: mode === "stubborn-tunnel" ? "ignore" : "",
+      MCP_SSO_SESSION_READY_FD: mode === "bad-session-fd" ? "4" : "3",
+      MCP_SSO_SESSION_PARENT_FD: mode === "parent-exit" ? "4" : mode === "bad-parent-fd" ? "5" : "",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "pipe", "pipe"],
   });
   let stdout = "";
   let stderr = "";
+  let readiness = "";
+  let readinessEnded = false;
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
+  child.stdio[3].setEncoding("utf8");
   child.stdout.on("data", (chunk) => { stdout += chunk; });
   child.stderr.on("data", (chunk) => { stderr += chunk; });
+  child.stdio[3].on("data", (chunk) => { readiness += chunk; });
+  child.stdio[3].on("end", () => { readinessEnded = true; });
   try {
+    if (mode === "ready-marker") {
+      const deadline = Date.now() + 8_000;
+      while (readiness !== "ready\n" && Date.now() < deadline) await new Promise((resolve) => { setTimeout(resolve, 10); });
+      assert.equal(readiness, "ready\n", "the wrapper marker follows one successful supervision interval");
+      while (!readinessEnded && Date.now() < deadline) await new Promise((resolve) => { setTimeout(resolve, 10); });
+      assert.equal(readinessEnded, true, "long-lived children do not keep the wrapper readiness pipe open");
+      writeFileSync(releaseTunnel, "release");
+    }
     if (["sigint", "sigterm", "stubborn-tunnel"].includes(mode)) {
       // Signal serve.sh ALONE (by pid, not the process group) and never
       // release the tunnel: cleanup must terminate the tunnel it started.
       await waitForFile(tunnelStarted);
       process.kill(child.pid, mode === "sigint" ? "SIGINT" : "SIGTERM");
+    }
+    if (mode === "parent-exit") {
+      await waitForFile(tunnelStarted);
+      child.stdio[4].end();
     }
     if (mode === "server-exit") {
       // A server that dies while serving must stop the run: the tunnel must not
@@ -219,11 +238,11 @@ exit 0
       normal: 0, failure: 7, sigint: 130, sigterm: 143, "startup-failure": 23,
       "startup-timeout": 1, "foreign-listener": 1, "port-busy": 1, "server-exit": 1, "duplicate-leg": 1,
       "stale-listener": 1, "stalled-readiness": 1, "bad-readiness": 1, "steal-while-serving": 1,
-      "stubborn-tunnel": 143,
+      "stubborn-tunnel": 143, "ready-marker": 0, "bad-session-fd": 1, "bad-parent-fd": 1, "parent-exit": 143,
     }[mode];
     assert.deepEqual(result, { code: expected, signal: null }, `${mode}: ${stderr}`);
     const gatewayPorts = legs.map((leg) => PORTS[leg].gateway);
-    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy", "duplicate-leg", "stale-listener", "stalled-readiness", "bad-readiness"].includes(mode)) {
+    if (["startup-failure", "startup-timeout", "foreign-listener", "port-busy", "duplicate-leg", "stale-listener", "stalled-readiness", "bad-readiness", "bad-session-fd", "bad-parent-fd"].includes(mode)) {
       assert.equal(existsSync(tunnelStarted), false, `${mode}: a failed, unproven, or ambiguous configuration never starts the public tunnel`);
     } else {
       assert.equal(existsSync(tunnelStarted), true, `${mode}: the tunnel starts once every leg is ready`);
@@ -233,10 +252,15 @@ exit 0
       for (const leg of legs) {
         assert.match(config, new RegExp(`- hostname: ${ORIGINS[leg].slice("https://".length)}\\n    service: http://127.0.0.1:${PORTS[leg].gateway}$`, "m"),
           "the ingress targets the address readiness and lsof proved");
+        assert.ok(stdout.includes(`claude mcp add --transport http mcp-sso-live-${leg} ${ORIGINS[leg]}/mcp`),
+          `${mode}: Claude Code uses the cleanup-owned name for ${leg}`);
+        assert.ok(stdout.includes(`codex mcp add mcp-sso-live-${leg} --url ${ORIGINS[leg]}/mcp`),
+          `${mode}: Codex uses the cleanup-owned name for ${leg}`);
       }
+      assert.ok(stdout.includes("Cleanup: node session.mjs cleanup"), `${mode}: the recovery command is visible`);
       assert.match(config, /- service: http_status:404\n$/);
     }
-    if (["port-busy", "duplicate-leg", "bad-readiness"].includes(mode)) {
+    if (["port-busy", "duplicate-leg", "bad-readiness", "bad-session-fd", "bad-parent-fd"].includes(mode)) {
       assert.equal(existsSync(runShLog), false, `${mode}: serve.sh stops before any server starts`);
     } else if (mode !== "startup-failure") {
       for (const port of gatewayPorts) {
@@ -246,23 +270,25 @@ exit 0
       assert.deepEqual(started, legs.map((leg) => `examples/fastify-sqlite/index.ts ${leg} PORT=${PORTS[leg].gateway}`).sort());
     }
     const config = /^tunnel config: (.+)$/m.exec(stdout)?.[1];
-    if (!["port-busy", "duplicate-leg", "bad-readiness"].includes(mode)) {
+    if (!["port-busy", "duplicate-leg", "bad-readiness", "bad-session-fd", "bad-parent-fd"].includes(mode)) {
       assert.ok(config, `${mode}: serve.sh printed its generated config path: ${stdout}`);
       assert.equal(existsSync(config), false, `${mode}: cleanup removed the generated tunnel config`);
     }
     assert.deepEqual(readdirSync(fixture).filter((name) => name.startsWith("mcp-sso-tunnel-")), [], `${mode}: no tunnel tempfile survives`);
-    if (!["startup-failure", "port-busy", "duplicate-leg", "bad-readiness"].includes(mode)) {
+    if (!["startup-failure", "port-busy", "duplicate-leg", "bad-readiness", "bad-session-fd", "bad-parent-fd"].includes(mode)) {
       const unrelatedPid = Number(readFileSync(bystanderPid, "utf8"));
       assert.doesNotThrow(() => process.kill(unrelatedPid, 0), `${mode}: an unrelated process in the group survived cleanup`);
       assert.equal(existsSync(bystanderSignaled), false, `${mode}: cleanup never signaled an unrelated process in the group`);
     }
-    if (["sigint", "sigterm", "server-exit"].includes(mode)) {
+    if (["sigint", "sigterm", "server-exit", "parent-exit"].includes(mode)) {
       assert.equal(readFileSync(tunnelStopped, "utf8"), "stopped", `${mode}: cleanup terminated the tunnel it started`);
     }
     if (mode === "server-exit") assert.match(stderr, /exited while serving/);
     if (mode === "stale-listener") assert.match(stderr, /no longer held solely by the server started/);
     if (mode === "stalled-readiness") assert.match(stderr, /failed readiness before tunnel startup/);
     if (mode === "bad-readiness") assert.match(stderr, /must be a whole number of seconds/);
+    if (mode === "bad-session-fd") assert.match(stderr, /MCP_SSO_SESSION_READY_FD must be 3/);
+    if (mode === "bad-parent-fd") assert.match(stderr, /MCP_SSO_SESSION_PARENT_FD must be 4/);
     if (mode === "stubborn-tunnel") {
       assert.equal(readFileSync(tunnelIgnored, "utf8"), "ignored", "the tunnel received the signal and ignored it");
       assert.equal(existsSync(tunnelStopped), false, "it never stopped on its own");
@@ -276,6 +302,7 @@ exit 0
     if (mode === "foreign-listener") assert.match(stderr, /is not the server just started/);
     if (mode === "port-busy") assert.match(stderr, /already has a listener/);
   } finally {
+    child.stdio[4]?.destroy();
     if (child.pid) try { process.kill(-child.pid, "SIGKILL"); } catch { /* already gone */ }
     if (existsSync(bystanderPid)) try { process.kill(Number(readFileSync(bystanderPid, "utf8")), "SIGKILL"); } catch { /* already gone */ }
     rmSync(fixture, { recursive: true, force: true });
@@ -283,7 +310,7 @@ exit 0
 }
 
 test("serve.sh proves readiness of the server it started and cleans up only what it owns", async (t) => {
-  for (const mode of ["normal", "failure", "sigint", "sigterm", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness", "bad-readiness", "steal-while-serving", "stubborn-tunnel"]) {
+  for (const mode of ["normal", "failure", "sigint", "sigterm", "parent-exit", "startup-failure", "startup-timeout", "foreign-listener", "port-busy", "server-exit", "stale-listener", "stalled-readiness", "bad-readiness", "bad-session-fd", "bad-parent-fd", "ready-marker", "steal-while-serving", "stubborn-tunnel"]) {
     await t.test(mode, () => runServeScenario(mode));
   }
   await t.test("two legs share one tunnel ingress and one cleanup", () => runServeScenario("normal", ["cloudflare_access", "google"]));

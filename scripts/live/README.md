@@ -139,6 +139,27 @@ What "private value" means, in the masker and in the orchestrator's own scan: ev
 
 ## Driving a real MCP client
 
+Use the session helper for a manual client run. It keeps the operator flow to two terminals and saves the audit-derived observations under `.live-state/`:
+
+```sh
+# terminal 1
+node session.mjs serve
+
+# terminal 2
+node session.mjs watch
+```
+
+`serve` defaults to all three legs and prints the Claude Code, Codex, ChatGPT, and claude.ai connection commands. Press Ctrl-C in the `serve` terminal when the run is finished. The helper stops `serve.sh` and attempts to remove its selected `mcp-sso-live-<leg>` entries from Claude Code and Codex. A liveness pipe also stops the public tunnel and servers if the wrapper exits. Run `node session.mjs cleanup` after a crash to attempt all six fixed entries again.
+
+`watch` appends audit-derived observations to `.live-state/session-results.jsonl`. `TOKEN` records an authorization-code exchange. `REQUEST` separately records a successful protected `/mcp` request for that client id. The audit does not identify which access token or authorization attempt made a request, so the helper does not assign `REQUEST` to a client row or claim that it used the token from a `TOKEN` observation. `DENIED` records an identity failure, and `INCOMPLETE` records an unfinished flow. Run `node session.mjs watch --all --once` to rebuild a one-shot summary from the current audit files. For a signed-out Codex CLI that uses dynamic registration, add `--codex-dcr` so the generated loopback authorization flow is identified as Codex.
+
+> [!IMPORTANT]
+> This is a single-operator helper. Run one `serve` and one `watch`, and stop both before starting another session. The helper does not coordinate concurrent commands. Its `.live-state/` files are local working notes, not release evidence.
+
+The helper rejects unknown or repeated command options, malformed session JSON, malformed audit rows, audit files over 10 MiB, and audit trails over 10,000 rows. One final LF is valid JSONL; another blank record is not. These checks prevent bad working data from becoming a result, but they do not make `.live-state/` a security boundary. Another process running as the operator can replace or forge those files.
+
+Run the helper from a trusted checkout and `PATH`. It executes the checkout's `scripts/live/serve.sh` and resolves `git`, `claude`, and `codex` from `PATH`. The npm package excludes this helper and `scripts/live/`.
+
 ```sh
 scripts/live/serve.sh cloudflare_access entra google
 ```
@@ -146,7 +167,7 @@ scripts/live/serve.sh cloudflare_access entra google
 Starts the shipped example once per leg on that leg's gateway port and runs the named Cloudflare tunnel with an ingress generated for exactly those hostnames. One tunnel carries every leg you name; start all the legs you want served in **one** invocation, because a second connector with a different ingress would receive part of the traffic. Before it exposes anything it proves readiness of the process it started — the port answers, the child is alive, and `lsof` reports the child as the only listener, re-proved immediately before the tunnel is exposed — and refuses a port that already has a listener. It prints the public URL and the client command per leg, for example:
 
 ```
-claude mcp add --transport http live-entra https://<host>/mcp
+claude mcp add --transport http mcp-sso-live-entra https://<host>/mcp
 ```
 
 The tunnel and every server run supervised: a signal delivered to `serve.sh` itself — Ctrl-C, or a `kill` by PID — stops the tunnel and the servers it started — with a bounded grace period before each is killed, so one child that ignores the signal cannot stall the rest of the cleanup — never the process group, and a server that dies **or whose port changes hands** while serving stops the run rather than leaving the tunnel exposing a dead or foreign backend (ownership is re-proved every second, not only before exposure). A leg named twice, or two legs the stack maps to the same hostname or port, is refused before anything starts. Readiness waits up to `MCP_SSO_READINESS_SECONDS` per leg (default 60; provider discovery at boot can take a while) — a wall-clock budget, so a server that accepts the connection and then stalls cannot stretch the wait. The client then performs discovery, registration, and authorize. **The consent and identity-provider sign-in steps need a human at a browser** — that is why `docs/live-verification.md` records those rows as owner-run, and a row flips to verified only when the owner records the observed result and caveat. The repeatable client × leg matrix is `scripts/live/CHECKLIST.md`.

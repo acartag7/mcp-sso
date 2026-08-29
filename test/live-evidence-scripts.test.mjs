@@ -452,6 +452,9 @@ test("CONTENT records: harness reference, README, and CHECKLIST agree with what 
   }
   assert.match(README, /MCP_SSO_READINESS_SECONDS/);
   assert.match(DOC, /MCP_SSO_READINESS_SECONDS/);
+  assert.match(DOC, /`TOKEN` records a successful authorization-code exchange/);
+  assert.match(DOC, /`REQUEST` separately records a successful protected request/);
+  assert.match(README, /does not assign `REQUEST` to a client row/);
   assert.match(README, /~\/\.mcp-sso-google\.env/);
   assert.match(README, /MCP_SSO_GOOGLE_ENV/);
   assert.match(README, /OIDC_CLIENT_SECRET/);
@@ -462,7 +465,9 @@ test("CONTENT records: harness reference, README, and CHECKLIST agree with what 
   const comparison = CHECKLIST.indexOf('test "$E1_AFTER" -eq "$E1_BEFORE"');
   assert.ok(before >= 0 && before < after && after < comparison, "E1 records a before/after count and fails when it changes");
   assert.doesNotMatch(CHECKLIST, /no audit row at all/i);
-  assert.match(CHECKLIST, /serve\.sh cloudflare_access entra google/);
+  assert.match(CHECKLIST, /node session\.mjs serve/);
+  assert.match(CHECKLIST, /node session\.mjs watch/);
+  assert.match(CHECKLIST, /Stop both before starting another session/);
 });
 
 test("CONTENT rehearsal: the orchestrator, the CI adapter, and the workflow keep the harness's promises", () => {
