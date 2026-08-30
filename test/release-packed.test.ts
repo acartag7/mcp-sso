@@ -10,7 +10,7 @@ import {
 } from "./lib/release-packed-flow.ts";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
-const allowedPackageRoots = new Set(["dist", "docs", "README.md", "LICENSE", "package.json"]);
+const allowedPackageRoots = new Set(["dist", "docs", "fixtures", "README.md", "LICENSE", "package.json"]);
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
 
 function exportTargets(value: unknown, label: string): string[] {

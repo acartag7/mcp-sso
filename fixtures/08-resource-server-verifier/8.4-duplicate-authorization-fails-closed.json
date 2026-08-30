@@ -1,0 +1,62 @@
+{
+  "id": "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed",
+  "profile": "host",
+  "contract": {
+    "section": "08",
+    "clause": "8.4",
+    "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
+  },
+  "status": "draft",
+  "notes": "Host profile because the exact challenge pins the reference implementation's origin-root protected-resource metadata location; Atesaki D1 uses its route-scoped location. Draft until the reference runner passes it. The response body is pinned by section 09 and is asserted by that section's fixture, not here. The audit event name and reason are pinned by section 13 and are added when that section's fixtures land. Both tokens are sentinels; the fixture must pass whether or not either would verify, because the rejection happens before verification.",
+  "given": {
+    "config": {
+      "issuer": "https://api.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000001",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": ["https://client.example.com/callback"],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": ["mcp:read", "mcp:write"],
+      "defaultScopes": ["mcp:read"],
+      "allowedOrigins": ["https://api.example.com"],
+      "dcr": { "mode": "stateless" },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": { "seed": "fixture-08-8.4-0001" },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": { "checks": [] },
+    "rateLimit": { "checks": [] },
+    "protectedResource": { "requiredScope": null }
+  },
+  "when": {
+    "request": {
+      "method": "POST",
+      "path": "/mcp",
+      "headers": {
+        "authorization": ["Bearer fixture-token-first", "Bearer fixture-token-second"],
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18"
+      },
+      "body": { "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }
+    }
+  },
+  "then": {
+    "status": 401,
+    "headers": {
+      "www-authenticate": {
+        "matches": "^Bearer resource_metadata=\"https://api\\.example\\.com/\\.well-known/oauth-protected-resource\", scope=\"mcp:read mcp:write\", error=\"invalid_token\"(, error_description=\"[^\"]*\")?$"
+      }
+    },
+    "outbound": []
+  }
+}
