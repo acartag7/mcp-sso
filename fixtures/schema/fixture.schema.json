@@ -175,6 +175,9 @@
         "headers": {
           "type": "object",
           "description": "Lower-case header name to matcher; a header not listed is not asserted",
+          "propertyNames": {
+            "$ref": "#/$defs/headerName"
+          },
           "additionalProperties": {
             "$ref": "#/$defs/matcher"
           }
@@ -212,6 +215,9 @@
               "headers": {
                 "type": "object",
                 "description": "Exact outbound header-name set; each lower-case name maps to a value matcher",
+                "propertyNames": {
+                  "$ref": "#/$defs/headerName"
+                },
                 "additionalProperties": {
                   "$ref": "#/$defs/presentMatcher"
                 }
@@ -375,6 +381,11 @@
         }
       ]
     },
+    "headerName": {
+      "type": "string",
+      "description": "Lowercase HTTP field name",
+      "pattern": "^[a-z0-9!#$%&'*+.^_`|~-]+$"
+    },
     "inboundRequest": {
       "type": "object",
       "additionalProperties": false,
@@ -393,6 +404,9 @@
         },
         "headers": {
           "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/headerName"
+          },
           "additionalProperties": {
             "$ref": "#/$defs/headerValue"
           }
@@ -431,6 +445,9 @@
             "headers": {
               "type": "object",
               "description": "Partial lower-case outbound request-header matcher",
+              "propertyNames": {
+                "$ref": "#/$defs/headerName"
+              },
               "additionalProperties": {
                 "$ref": "#/$defs/matcher"
               }
@@ -456,8 +473,11 @@
             },
             "headers": {
               "type": "object",
+              "propertyNames": {
+                "$ref": "#/$defs/headerName"
+              },
               "additionalProperties": {
-                "type": "string"
+                "$ref": "#/$defs/headerValue"
               }
             },
             "body": {
@@ -477,19 +497,31 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["credential", "result"],
+            "required": ["input", "result"],
             "properties": {
-              "credential": { "type": "string", "minLength": 1 },
+              "input": {
+                "$ref": "#/$defs/bodyValue"
+              },
               "result": {
                 "oneOf": [
                   {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["ok", "subject"],
+                    "required": ["ok", "identity"],
                     "properties": {
                       "ok": { "const": true },
-                      "subject": { "type": "string", "minLength": 1 },
-                      "allowedScopes": { "$ref": "#/$defs/stringArray" }
+                      "identity": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["subject"],
+                        "properties": {
+                          "subject": { "type": "string", "minLength": 1 },
+                          "allowedScopes": { "$ref": "#/$defs/stringArray" },
+                          "claims": {
+                            "type": "object"
+                          }
+                        }
+                      }
                     }
                   },
                   {
@@ -559,7 +591,10 @@
             "status": { "type": "integer", "minimum": 200, "maximum": 299 },
             "headers": {
               "type": "object",
-              "additionalProperties": { "type": "string" }
+              "propertyNames": {
+                "$ref": "#/$defs/headerName"
+              },
+              "additionalProperties": { "$ref": "#/$defs/headerValue" }
             },
             "body": { "$ref": "#/$defs/bodyValue" }
           }
