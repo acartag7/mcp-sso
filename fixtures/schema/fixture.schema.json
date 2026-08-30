@@ -7,11 +7,11 @@
   "additionalProperties": false,
   "required": [
     "id",
+    "kind",
     "profile",
     "contract",
     "status",
     "given",
-    "when",
     "then"
   ],
   "properties": {
@@ -19,6 +19,13 @@
       "type": "string",
       "description": "<NN>-<section-slug>/<clause>-<slug>; must equal the file path relative to fixtures/ without .json",
       "pattern": "^(0[1-9]|1[0-9])-[a-z0-9]+(-[a-z0-9]+)*/[0-9]+(\\.[0-9]+){0,2}[a-z]?-[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "kind": {
+      "enum": [
+        "fixture",
+        "boot"
+      ],
+      "description": "fixture sends one HTTP request; boot asserts application construction without a request"
     },
     "profile": {
       "enum": [
@@ -44,6 +51,11 @@
           "type": "string",
           "pattern": "^[0-9]+(\\.[0-9]+){0,2}[a-z]?$"
         },
+        "statement": {
+          "type": "string",
+          "description": "Append-only normative-statement anchor; required before a fixture freezes",
+          "pattern": "^[0-9]+(\\.[0-9]+){0,2}\\.[a-z]$"
+        },
         "quote": {
           "type": "string",
           "minLength": 1,
@@ -66,87 +78,10 @@
       "type": "string",
       "description": "What is deliberately not asserted and why"
     },
-    "given": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "config",
-        "clock",
-        "random",
-        "keys",
-        "state",
-        "http",
-        "identity",
-        "rateLimit",
-        "protectedResource"
-      ],
-      "properties": {
-        "config": {
-          "$ref": "#/$defs/fixtureConfig"
-        },
-        "clock": {
-          "type": "string",
-          "description": "Canonical run timestamp, UTC ISO 8601 with exactly 3 ms digits (section 12.1)",
-          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
-        },
-        "random": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "seed"
-          ],
-          "properties": {
-            "seed": {
-              "type": "string",
-              "minLength": 1,
-              "description": "UTF-8 input to the section 19.2 HMAC-SHA-256 byte stream; maximum 1,024 UTF-8 bytes"
-            }
-          }
-        },
-        "keys": {
-          "type": "object",
-          "description": "Logical name to a PEM path under fixtures/keys/",
-          "additionalProperties": false,
-          "required": [
-            "signingPrivate"
-          ],
-          "properties": {
-            "signingPrivate": {
-              "type": "string",
-              "pattern": "^keys/[a-z0-9-]+\\.pem$"
-            },
-            "signingPublic": {
-              "type": "string",
-              "pattern": "^keys/[a-z0-9-]+\\.pem$"
-            }
-          }
-        },
-        "state": {
-          "type": "object",
-          "description": "Pre-existing store rows, keyed by record kind, in the section 12.1 record shapes",
-          "additionalProperties": {
-            "type": "array",
-            "items": { "type": "object" }
-          }
-        },
-        "http": {
-          "type": "array",
-          "description": "Every outbound exchange the implementation may perform; an unmatched outbound call fails the fixture",
-          "items": {
-            "$ref": "#/$defs/exchange"
-          }
-        },
-        "identity": {
-          "$ref": "#/$defs/identity"
-        },
-        "rateLimit": {
-          "$ref": "#/$defs/rateLimit"
-        },
-        "protectedResource": {
-          "$ref": "#/$defs/protectedResource"
-        }
-      }
+    "chain": {
+      "$ref": "#/$defs/chain"
     },
+    "given": {},
     "when": {
       "type": "object",
       "additionalProperties": false,
@@ -159,77 +94,7 @@
         }
       }
     },
-    "then": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "status",
-        "outbound"
-      ],
-      "properties": {
-        "status": {
-          "type": "integer",
-          "minimum": 100,
-          "maximum": 599
-        },
-        "headers": {
-          "type": "object",
-          "description": "Lower-case header name to matcher; a header not listed is not asserted",
-          "propertyNames": {
-            "$ref": "#/$defs/headerName"
-          },
-          "additionalProperties": {
-            "$ref": "#/$defs/matcher"
-          }
-        },
-        "body": {
-          "$ref": "#/$defs/matcher"
-        },
-        "audit": {
-          "$ref": "#/$defs/auditAssertion"
-        },
-        "state": {
-          "$ref": "#/$defs/stateAssertion"
-        },
-        "outbound": {
-          "type": "array",
-          "description": "Exact ordered list of outbound calls that MUST have happened; empty means none",
-          "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "method",
-              "url",
-              "headers",
-              "body"
-            ],
-            "properties": {
-              "method": {
-                "type": "string",
-                "pattern": "^[A-Z]+$"
-              },
-              "url": {
-                "type": "string",
-                "format": "uri"
-              },
-              "headers": {
-                "type": "object",
-                "description": "Exact outbound header-name set; each lower-case name maps to a value matcher",
-                "propertyNames": {
-                  "$ref": "#/$defs/headerName"
-                },
-                "additionalProperties": {
-                  "$ref": "#/$defs/presentMatcher"
-                }
-              },
-              "body": {
-                "$ref": "#/$defs/matcher"
-              }
-            }
-          }
-        }
-      }
-    },
+    "then": {},
     "receipt": {
       "type": "object",
       "additionalProperties": false,
@@ -261,6 +126,531 @@
     }
   },
   "$defs": {
+    "chain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "step"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "previous": {
+          "type": "string",
+          "pattern": "^(0[1-9]|1[0-9])-[a-z0-9]+(-[a-z0-9]+)*/[0-9]+(\\.[0-9]+){0,2}[a-z]?-[a-z0-9]+(-[a-z0-9]+)*$"
+        }
+      }
+    },
+    "clock": {
+      "type": "string",
+      "description": "Canonical run timestamp, UTC ISO 8601 with exactly 3 ms digits (section 12.1)",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "random": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "seed"
+      ],
+      "properties": {
+        "seed": {
+          "type": "string",
+          "minLength": 1,
+          "description": "UTF-8 input to the section 19.2 HMAC-SHA-256 byte stream; maximum 1,024 UTF-8 bytes"
+        }
+      }
+    },
+    "fixtureKeys": {
+      "type": "object",
+      "description": "Logical name to a PEM path under fixtures/keys/",
+      "additionalProperties": false,
+      "required": [
+        "signingPrivate"
+      ],
+      "properties": {
+        "signingPrivate": {
+          "type": "string",
+          "pattern": "^keys/[a-z0-9-]+\\.pem$"
+        },
+        "signingPublic": {
+          "type": "string",
+          "pattern": "^keys/[a-z0-9-]+\\.pem$"
+        }
+      }
+    },
+    "bootKeys": {
+      "type": "object",
+      "description": "A named private key is materialized only when supplied; omission can test a missing signing key",
+      "additionalProperties": false,
+      "properties": {
+        "signingPrivate": {
+          "type": "string",
+          "pattern": "^keys/[a-z0-9-]+\\.pem$"
+        },
+        "signingPublic": {
+          "type": "string",
+          "pattern": "^keys/[a-z0-9-]+\\.pem$"
+        }
+      }
+    },
+    "httpGiven": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "config",
+        "clock",
+        "random",
+        "keys",
+        "state",
+        "http",
+        "identity",
+        "rateLimit",
+        "protectedResource"
+      ],
+      "properties": {
+        "config": { "$ref": "#/$defs/fixtureConfig" },
+        "clock": { "$ref": "#/$defs/clock" },
+        "random": { "$ref": "#/$defs/random" },
+        "keys": { "$ref": "#/$defs/fixtureKeys" },
+        "state": { "$ref": "#/$defs/logicalState" },
+        "http": { "$ref": "#/$defs/httpScript" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "rateLimit": { "$ref": "#/$defs/rateLimit" },
+        "protectedResource": { "$ref": "#/$defs/protectedResource" }
+      }
+    },
+    "bootGiven": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "entrypoint",
+        "config",
+        "clock",
+        "random",
+        "keys",
+        "state",
+        "http",
+        "identity",
+        "rateLimit"
+      ],
+      "properties": {
+        "entrypoint": {
+          "enum": [
+            "createBridgeConfig",
+            "Bridge"
+          ]
+        },
+        "config": {
+          "description": "Literal JSON input to the named construction boundary; malformed values are not repaired"
+        },
+        "clock": { "$ref": "#/$defs/clock" },
+        "random": { "$ref": "#/$defs/random" },
+        "keys": { "$ref": "#/$defs/bootKeys" },
+        "state": { "$ref": "#/$defs/logicalState" },
+        "http": { "$ref": "#/$defs/httpScript" },
+        "identity": { "$ref": "#/$defs/identity" },
+        "rateLimit": { "$ref": "#/$defs/rateLimit" }
+      }
+    },
+    "httpScript": {
+      "type": "array",
+      "description": "Every outbound exchange the implementation may perform; an unmatched outbound call fails the fixture",
+      "items": {
+        "$ref": "#/$defs/exchange"
+      }
+    },
+    "httpThen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "outbound"
+      ],
+      "properties": {
+        "status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599
+        },
+        "headers": {
+          "type": "object",
+          "description": "Lower-case header name to matcher; a header not listed is not asserted",
+          "propertyNames": {
+            "$ref": "#/$defs/headerName"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/matcher"
+          }
+        },
+        "body": { "$ref": "#/$defs/matcher" },
+        "audit": { "$ref": "#/$defs/auditAssertion" },
+        "state": { "$ref": "#/$defs/stateAssertion" },
+        "captures": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/capture" }
+        },
+        "outbound": { "$ref": "#/$defs/outboundAssertion" }
+      }
+    },
+    "bootThen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "boot",
+        "outbound"
+      ],
+      "properties": {
+        "boot": { "$ref": "#/$defs/bootAssertion" },
+        "audit": { "$ref": "#/$defs/auditAssertion" },
+        "state": { "$ref": "#/$defs/stateAssertion" },
+        "outbound": { "$ref": "#/$defs/outboundAssertion" }
+      }
+    },
+    "bootAssertion": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome"
+          ],
+          "properties": {
+            "outcome": { "const": "accepted" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "outcome",
+            "error"
+          ],
+          "properties": {
+            "outcome": { "const": "rejected" },
+            "error": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "code"
+              ],
+              "properties": {
+                "code": { "type": "string", "minLength": 1 },
+                "name": { "$ref": "#/$defs/presentMatcher" },
+                "message": { "$ref": "#/$defs/presentMatcher" }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "outboundAssertion": {
+      "type": "array",
+      "description": "Exact ordered list of outbound calls that MUST have happened; empty means none",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "method",
+          "url",
+          "headers",
+          "body"
+        ],
+        "properties": {
+          "method": {
+            "type": "string",
+            "pattern": "^[A-Z]+$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "headers": {
+            "type": "object",
+            "description": "Exact outbound header-name set; each lower-case name maps to a value matcher",
+            "propertyNames": {
+              "$ref": "#/$defs/headerName"
+            },
+            "additionalProperties": {
+              "$ref": "#/$defs/presentMatcher"
+            }
+          },
+          "body": { "$ref": "#/$defs/matcher" }
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "source"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "source": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "bodyPointer"
+              ],
+              "properties": {
+                "bodyPointer": {
+                  "type": "string",
+                  "pattern": "^/"
+                }
+              }
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "header",
+                "urlQuery"
+              ],
+              "properties": {
+                "header": { "$ref": "#/$defs/headerName" },
+                "urlQuery": { "type": "string", "minLength": 1 }
+              }
+            }
+          ]
+        },
+        "jwt": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "header",
+            "claims"
+          ],
+          "properties": {
+            "key": { "const": "signingPublic" },
+            "header": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "alg",
+                "kid",
+                "typ"
+              ],
+              "properties": {
+                "alg": { "const": "ES256" },
+                "kid": { "type": "string", "minLength": 1 },
+                "typ": { "const": "JWT" }
+              }
+            },
+            "claims": {
+              "type": "object"
+            }
+          }
+        }
+      }
+    },
+    "captureReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "$capture"
+      ],
+      "properties": {
+        "$capture": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "fixture",
+            "name",
+            "format"
+          ],
+          "properties": {
+            "fixture": {
+              "type": "string",
+              "pattern": "^(0[1-9]|1[0-9])-[a-z0-9]+(-[a-z0-9]+)*/[0-9]+(\\.[0-9]+){0,2}[a-z]?-[a-z0-9]+(-[a-z0-9]+)*$"
+            },
+            "name": {
+              "type": "string",
+              "pattern": "^[a-z][a-z0-9_]*$"
+            },
+            "format": {
+              "enum": [
+                "raw",
+                "bearer"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "logicalState": {
+      "type": "object",
+      "description": "Portable logical StorePort and stored-DCR ClientStore rows; omitted record kinds are empty",
+      "additionalProperties": false,
+      "properties": {
+        "authorization_code": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/authorizationCodeRow" }
+        },
+        "consent_jti": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/consentJtiRow" }
+        },
+        "refresh_token": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/refreshTokenRow" }
+        },
+        "revoked_family": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/revokedFamilyRow" }
+        },
+        "client_registration": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/clientRegistrationRow" }
+        },
+        "store_instance": {
+          "type": "array",
+          "maxItems": 1,
+          "items": { "$ref": "#/$defs/storeInstanceRow" }
+        }
+      }
+    },
+    "authorizationCodeRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "code_hash",
+        "client_id",
+        "subject",
+        "redirect_uri",
+        "resource",
+        "scopes",
+        "code_challenge",
+        "code_challenge_method",
+        "expires_at"
+      ],
+      "properties": {
+        "code_hash": { "$ref": "#/$defs/sha256Hex" },
+        "client_id": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 1 },
+        "redirect_uri": { "type": "string", "minLength": 1 },
+        "resource": { "type": "string", "minLength": 1 },
+        "scopes": { "$ref": "#/$defs/stringArray" },
+        "code_challenge": { "type": "string", "minLength": 1 },
+        "code_challenge_method": { "const": "S256" },
+        "expires_at": { "$ref": "#/$defs/utcTimestamp" },
+        "grant_generation": { "$ref": "#/$defs/positiveInteger" }
+      }
+    },
+    "consentJtiRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "jti",
+        "expires_at"
+      ],
+      "properties": {
+        "jti": { "type": "string", "minLength": 1 },
+        "expires_at": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "refreshTokenRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "token_hash",
+        "family_id",
+        "client_id",
+        "subject",
+        "resource",
+        "scopes",
+        "expires_at"
+      ],
+      "properties": {
+        "token_hash": { "$ref": "#/$defs/sha256Hex" },
+        "family_id": { "type": "string", "minLength": 1 },
+        "previous_token_hash": { "$ref": "#/$defs/sha256Hex" },
+        "client_id": { "type": "string", "minLength": 1 },
+        "subject": { "type": "string", "minLength": 1 },
+        "resource": { "type": "string", "minLength": 1 },
+        "scopes": { "$ref": "#/$defs/stringArray" },
+        "expires_at": { "$ref": "#/$defs/utcTimestamp" },
+        "consumed_at": { "$ref": "#/$defs/utcTimestamp" },
+        "grant_generation": { "$ref": "#/$defs/positiveInteger" }
+      }
+    },
+    "revokedFamilyRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "family_id",
+        "resource",
+        "revoked_at"
+      ],
+      "properties": {
+        "family_id": { "type": "string", "minLength": 1 },
+        "resource": { "type": "string", "minLength": 1 },
+        "revoked_at": { "$ref": "#/$defs/utcTimestamp" },
+        "grant_generation": { "$ref": "#/$defs/positiveInteger" }
+      }
+    },
+    "clientRegistrationRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "client_id",
+        "redirect_uris",
+        "application_type",
+        "issued_at_epoch"
+      ],
+      "properties": {
+        "client_id": { "type": "string", "minLength": 1 },
+        "redirect_uris": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "application_type": {
+          "enum": [
+            "native",
+            "web"
+          ]
+        },
+        "issued_at_epoch": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "storeInstanceRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instance_id"
+      ],
+      "properties": {
+        "instance_id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{22,128}$"
+        }
+      }
+    },
+    "sha256Hex": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
     "fixtureConfig": {
       "type": "object",
       "description": "Complete JSON fixture configuration for section 05. given.keys.signingPrivate materializes signingPrivateJwk; stored mode materializes its store from given.state.",
@@ -374,9 +764,15 @@
           "type": "string"
         },
         {
+          "$ref": "#/$defs/captureReference"
+        },
+        {
           "type": "array",
           "items": {
-            "type": "string"
+            "oneOf": [
+              { "type": "string" },
+              { "$ref": "#/$defs/captureReference" }
+            ]
           }
         }
       ]
@@ -412,7 +808,7 @@
           }
         },
         "body": {
-          "description": "JSON value sent as the body; a string is sent verbatim"
+          "description": "JSON value sent as the body; a string is sent verbatim; an exact captureReference object is replaced before encoding"
         }
       }
     },
@@ -497,7 +893,7 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["input", "result"],
+            "required": ["input"],
             "properties": {
               "input": {
                 "$ref": "#/$defs/bodyValue"
@@ -534,8 +930,53 @@
                     }
                   }
                 ]
+              },
+              "throw": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "code",
+                      "description",
+                      "status"
+                    ],
+                    "properties": {
+                      "kind": { "const": "oauth" },
+                      "code": { "type": "string", "minLength": 1 },
+                      "description": { "type": "string" },
+                      "status": {
+                        "enum": [
+                          401,
+                          403
+                        ]
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind"
+                    ],
+                    "properties": {
+                      "kind": { "const": "generic" }
+                    }
+                  }
+                ]
               }
-            }
+            },
+            "oneOf": [
+              {
+                "properties": { "result": {} },
+                "required": ["result"]
+              },
+              {
+                "properties": { "throw": {} },
+                "required": ["throw"]
+              }
+            ]
           }
         }
       }
@@ -681,15 +1122,16 @@
     "stateAssertion": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["rows", "absent", "allowExtraRows"],
+      "required": ["mode", "rows", "absent"],
       "properties": {
+        "mode": {
+          "enum": [
+            "exact",
+            "contains"
+          ]
+        },
         "rows": {
-          "type": "object",
-          "description": "Exact post-request rows by record kind",
-          "additionalProperties": {
-            "type": "array",
-            "items": { "type": "object" }
-          }
+          "$ref": "#/$defs/logicalState"
         },
         "absent": {
           "type": "array",
@@ -699,17 +1141,22 @@
             "additionalProperties": false,
             "required": ["kind", "where"],
             "properties": {
-              "kind": { "type": "string", "minLength": 1 },
+              "kind": {
+                "enum": [
+                  "authorization_code",
+                  "consent_jti",
+                  "refresh_token",
+                  "revoked_family",
+                  "client_registration",
+                  "store_instance"
+                ]
+              },
               "where": {
                 "type": "object",
                 "minProperties": 1
               }
             }
           }
-        },
-        "allowExtraRows": {
-          "const": false,
-          "description": "Extra store rows are never accepted"
         }
       }
     },
@@ -760,6 +1207,51 @@
     {
       "if": {
         "properties": {
+          "kind": {
+            "const": "fixture"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "required": [
+          "when"
+        ],
+        "properties": {
+          "when": {},
+          "given": { "$ref": "#/$defs/httpGiven" },
+          "then": { "$ref": "#/$defs/httpThen" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "boot"
+          }
+        },
+        "required": [
+          "kind"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "when"
+          ]
+        },
+        "properties": {
+          "given": { "$ref": "#/$defs/bootGiven" },
+          "then": { "$ref": "#/$defs/bootThen" }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "status": {
             "const": "frozen"
           }
@@ -770,7 +1262,16 @@
       },
       "then": {
         "properties": {
-          "receipt": {}
+          "receipt": {},
+          "contract": {
+            "type": "object",
+            "properties": {
+              "statement": {}
+            },
+            "required": [
+              "statement"
+            ]
+          }
         },
         "required": [
           "receipt"

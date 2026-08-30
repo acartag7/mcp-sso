@@ -1,5 +1,6 @@
 {
   "id": "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed",
+  "kind": "fixture",
   "profile": "host",
   "contract": {
     "section": "08",
