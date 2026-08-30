@@ -9,3 +9,7 @@ This file is append-only. Each entry records a change to a frozen fixture or a b
 ## 2026-08-31 bootstrap correction
 
 `08-resource-server-verifier/8.4-duplicate-authorization-fails-closed` remained `draft`. It gained `kind: "fixture"` when the schema added boot fixtures. The request and expected response did not change. No frozen hash or receipt existed, so this change did not unfreeze evidence.
+
+## 2026-08-31 request-body encoding correction
+
+`08-resource-server-verifier/8.4-duplicate-authorization-fails-closed` remained `draft`. Its JSON request body gained the explicit `json` wrapper required by the request-body encoding contract. The serialized request bytes and expected response did not change. No frozen hash or receipt existed, so this change did not unfreeze evidence.

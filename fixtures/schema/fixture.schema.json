@@ -808,7 +808,73 @@
           }
         },
         "body": {
-          "description": "JSON value sent as the body; a string is sent verbatim; an exact captureReference object is replaced before encoding"
+          "$ref": "#/$defs/inboundBody"
+        }
+      }
+    },
+    "inboundBody": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "json"
+          ],
+          "properties": {
+            "json": {
+              "description": "JSON value serialized after recursive capture replacement"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "form"
+          ],
+          "properties": {
+            "form": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/formField"
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "oneOf": [
+                { "type": "string" },
+                { "$ref": "#/$defs/captureReference" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "formField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "value"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "oneOf": [
+            { "type": "string" },
+            { "$ref": "#/$defs/captureReference" }
+          ]
         }
       }
     },

@@ -11,6 +11,14 @@ import {
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const allowedPackageRoots = new Set(["dist", "docs", "fixtures", "README.md", "LICENSE", "package.json"]);
+const requiredFixtureFiles = new Set([
+  "fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json",
+  "fixtures/FREEZE-LOG.md",
+  "fixtures/README.md",
+  "fixtures/keys/signing-private.pem",
+  "fixtures/keys/signing-public.pem",
+  "fixtures/schema/fixture.schema.json",
+]);
 const releaseTest = process.env.RUN_RELEASE_MATRIX === "true" ? test : test.skip;
 
 function exportTargets(value: unknown, label: string): string[] {
@@ -74,12 +82,14 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
     const tarball = resolve(base, packEntry.filename);
     assert.ok(existsSync(tarball), "npm pack produced the tarball in the private temporary directory");
     const packedRoots = new Set<string>();
+    const packedFiles = new Set(packEntry.files.map((file) => file.path));
     for (const file of packEntry.files) {
       const root = file.path.split("/", 1)[0];
       assert.ok(root && allowedPackageRoots.has(root), `unexpected packed root: ${file.path}`);
       packedRoots.add(root);
     }
     assert.deepEqual([...packedRoots].sort(), [...allowedPackageRoots].sort(), "packed roots exactly match the public artifact contract");
+    for (const file of requiredFixtureFiles) assert.ok(packedFiles.has(file), `packed artifact contains ${file}`);
     const josePack = await run("npm", ["pack", "--ignore-scripts", "--json", "--pack-destination", base, join(repo, "node_modules", "jose")], repo);
     assert.equal(josePack.code, 0, `local jose pack failed:\n${josePack.output}`);
     const joseTarball = (jsonArray(josePack.output)[0] as { filename: string }).filename;

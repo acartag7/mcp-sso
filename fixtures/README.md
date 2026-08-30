@@ -21,6 +21,7 @@ FREEZE-LOG.md                every change to a frozen fixture, with the contract
 - Label each fixture `portable` or `host`. Portable fixtures count toward cross-implementation parity. Host fixtures cover the TypeScript reference envelope and do not count toward another implementation's parity claim.
 - Keep a fixture `draft` until the reference implementation's runner passes it unchanged. Freeze it only with a `receipt` that names the implementation, version, commit, and date.
 - One HTTP fixture, one request. A flow is a declared chain whose pre-state is the previous fixture's expected post-state. A named capture can carry an emitted string into a later step without pinning nondeterministic ES256 bytes.
+- Write every request body as exactly one of `json`, ordered `form` fields, or verbatim `text`. The runner supplies no encoding or Content-Type default.
 - Do not duplicate a server-side scenario that the frozen official MCP conformance requirement set scores. The `2026-07-28` set scores no OAuth resource-server or authorization-server scenario, so it excludes none of the current corpus.
 - A frozen fixture changes only with a contract change and a `FREEZE-LOG.md` entry.
 - Put the complete fixture configuration in `given.config`. The runner materializes the signing key from `given.keys` and a stored DCR port from `given.state`. It supplies no configuration default.

@@ -55,7 +55,7 @@
         "accept": "application/json, text/event-stream",
         "mcp-protocol-version": "2025-06-18"
       },
-      "body": { "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} }
+      "body": { "json": { "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} } }
     }
   },
   "then": {
