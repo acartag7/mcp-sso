@@ -444,7 +444,9 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "status"
+            "status",
+            "headers",
+            "body"
           ],
           "properties": {
             "status": {
@@ -459,7 +461,7 @@
               }
             },
             "body": {
-              "description": "JSON value; a string is returned verbatim"
+              "$ref": "#/$defs/bodyValue"
             }
           }
         }
@@ -552,14 +554,14 @@
         "success": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status"],
+          "required": ["status", "headers", "body"],
           "properties": {
             "status": { "type": "integer", "minimum": 200, "maximum": 299 },
             "headers": {
               "type": "object",
               "additionalProperties": { "type": "string" }
             },
-            "body": {}
+            "body": { "$ref": "#/$defs/bodyValue" }
           }
         }
       }
@@ -584,6 +586,27 @@
         "ip": { "type": "string" },
         "selectedClientAuthMethod": { "const": "none" }
       }
+    },
+    "bodyValue": {
+      "description": "Explicit body value or explicit absence",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["absent"],
+          "properties": {
+            "absent": { "const": true }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["value"],
+          "properties": {
+            "value": {}
+          }
+        }
+      ]
     },
     "auditEventSelector": {
       "type": "object",
