@@ -1,6 +1,6 @@
 # 6. Ports
 
-**What this protects and why.** The interfaces the core talks through: clock, audit, store, client store, identity, fetcher, rate limit. Each one names what the core may assume and what a custom implementation must never do, because a port is where a deployer's own code can weaken the library's guarantees without touching it.
+**What this protects and why.** The interfaces the core talks through: clock, audit, store, client store, identity, fetcher, rate limit, and fixture entropy. Each one names what the core may assume and what a custom implementation must never do, because a port is where a deployer's own code can weaken the library's guarantees without touching it.
 
 DDD-lite: pure core (use-cases + ports, no infra imports) and adapters at the edge. Every external capability is a port so the core is testable in isolation.
 
@@ -261,3 +261,13 @@ Without a Hono `clientIp`, non-stored operations use `<prefix>:unknown` and audi
 ### Protected `/mcp`
 
 `RateLimitPort` does not protect `/mcp`. A Fastify host uses `mcp-sso/fastify/protected-resource-rate-limit`, described in §8.4 and §15. That helper installs `@fastify/rate-limit` at `onRequest` with a finite budget and `skipOnError: false`. Its counter-store failure returns 503 before bearer verification or protected handler work.
+
+## 6.8 `RandomPort`
+
+```ts
+interface RandomPort { bytes(length: number): Uint8Array; }
+```
+
+`RandomPort` is the entropy port for fixture composition. `systemRandom` is the default and uses Node's CSPRNG. `randomBytesFrom` validates the requested length, returned type, and returned byte count before a generated value uses the result.
+
+A parity-fixture runner may set `RandomPort` to compose deterministic fixtures. Setting `RandomPort` in a production composition is unsupported and falls outside every security claim.
