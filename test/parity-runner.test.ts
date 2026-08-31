@@ -8,7 +8,7 @@ import { bodyObservation, matcherMatches } from "./parity/matchers.ts";
 import { OutboundScript } from "./parity/ports.ts";
 import { runFixture } from "./parity/runner.ts";
 import { sendRealHttp } from "./parity/http-client.ts";
-import { clauseSource, compileJsonSchema, loadCorpus, validateChains } from "./parity/schema.ts";
+import { clauseSource, compileJsonSchema, loadCorpus, validateChains, validateFixtureIdentity } from "./parity/schema.ts";
 import { SeededRandom } from "./parity/random.ts";
 import { FixtureStore } from "./parity/store.ts";
 import { adapterForChainMember, adaptersForChain } from "./parity/adapters.ts";
@@ -25,6 +25,22 @@ test("fixture loader validates both section 8.4 drafts and their contract quotes
 test("fixture quote validation admits a root contract clause", () => {
   const source = "# 11. Scope contract\n\nRoot-clause sentence.\n\n# 12. Next contract\n\nOther sentence.\n";
   assert.equal(clauseSource(source, "11").trim(), "Scope contract\n\nRoot-clause sentence.");
+});
+
+test("fixture ids bind their directory and filename to the declared clause", async () => {
+  const fixture = await hostFixture();
+  validateFixtureIdentity(fixture, fixture.id, fixture.id);
+  const wrongSection = structuredClone(fixture); wrongSection.contract.section = "09";
+  assert.throws(() => validateFixtureIdentity(wrongSection, wrongSection.id, wrongSection.id),
+    /id section 08 does not match contract section 09/);
+  const wrongClause = structuredClone(fixture); wrongClause.contract.clause = "8.3";
+  assert.throws(() => validateFixtureIdentity(wrongClause, wrongClause.id, wrongClause.id),
+    /id clause 8\.4 does not match contract clause 8\.3/);
+  const crossSection = structuredClone(fixture);
+  crossSection.id = "08-resource-server-verifier/9.2-cross-section";
+  crossSection.contract.clause = "9.2";
+  assert.throws(() => validateFixtureIdentity(crossSection, crossSection.id, crossSection.id),
+    /contract clause 9\.2 does not belong to section 08/);
 });
 
 test("request materialization preserves real header occurrences and adds no Content-Type", () => {

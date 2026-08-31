@@ -69,11 +69,27 @@ async function loadFixture(path: string, root: string, validate: ValidateFunctio
   }
   const fixture = raw as ParityFixture;
   const expectedId = relative(root, path).split(sep).join("/").replace(/\.json$/u, "");
-  if (fixture.id !== expectedId) {
-    throw new FixtureRunnerError(`${path}: id ${fixture.id} does not match path ${expectedId}`);
-  }
+  validateFixtureIdentity(fixture, expectedId, path);
   await validateQuote(fixture);
   return fixture;
+}
+
+export function validateFixtureIdentity(fixture: ParityFixture, expectedId: string, label: string): void {
+  if (fixture.id !== expectedId) {
+    throw new FixtureRunnerError(`${label}: id ${fixture.id} does not match path ${expectedId}`);
+  }
+  const [directory, filename] = expectedId.split("/");
+  const section = directory?.slice(0, directory.indexOf("-"));
+  const clause = filename?.slice(0, filename.indexOf("-"));
+  if (section !== fixture.contract.section) {
+    throw new FixtureRunnerError(`${label}: id section ${section} does not match contract section ${fixture.contract.section}`);
+  }
+  if (clause !== fixture.contract.clause) {
+    throw new FixtureRunnerError(`${label}: id clause ${clause} does not match contract clause ${fixture.contract.clause}`);
+  }
+  if (Number(clause.split(".", 1)[0]) !== Number(section)) {
+    throw new FixtureRunnerError(`${label}: contract clause ${clause} does not belong to section ${section}`);
+  }
 }
 
 async function validateQuote(fixture: ParityFixture): Promise<void> {
