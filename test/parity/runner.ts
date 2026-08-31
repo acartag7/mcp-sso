@@ -13,6 +13,7 @@ import { sendRealHttp } from "./http-client.ts";
 import { assertMatcher, bodyObservation, headerObservation } from "./matchers.ts";
 import { assertAudit, assertState } from "./assertions.ts";
 import { FixtureRunnerError, fixtureFailure } from "./error.ts";
+import type { ClockPort } from "../../src/ports/clock.ts";
 
 export async function runFixture(
   fixture: ParityFixture, adapter: AdapterKind = "fastify", captures: CaptureValues = new Map(),
@@ -24,6 +25,7 @@ export async function runFixture(
 }
 
 async function runHttp(fixture: HttpFixture, adapter: AdapterKind, captures: CaptureValues): Promise<void> {
+  const clock = fixtureClock(fixture.given.clock, fixture.id);
   const request = materializeRequest(fixture.when.request, captures);
   const random = new SeededRandom(fixture.given.random.seed);
   const store = new FixtureStore(fixture.given.state, random);
@@ -37,7 +39,6 @@ async function runHttp(fixture: HttpFixture, adapter: AdapterKind, captures: Cap
   try {
     globalThis.fetch = outbound.fetch as typeof fetch;
     const config = await materializeConfig(fixture.given.config, fixture.given.keys, store);
-    const clock = { nowMs: () => Date.parse(fixture.given.clock) };
     const bridge = new Bridge({ config, store, clock, audit, rateLimit, random,
       cimdTransport: outbound.transport, cimdResolver: outbound.resolver });
     const authorizer = new RequestAuthorizer({ config, clock, audit });
@@ -65,6 +66,7 @@ async function runHttp(fixture: HttpFixture, adapter: AdapterKind, captures: Cap
 }
 
 async function runBoot(fixture: BootFixture): Promise<void> {
+  const clock = fixtureClock(fixture.given.clock, fixture.id);
   const random = new SeededRandom(fixture.given.random.seed);
   const store = new FixtureStore(fixture.given.state, random);
   const audit = new RecordingAudit();
@@ -80,7 +82,6 @@ async function runBoot(fixture: BootFixture): Promise<void> {
         const config = await materializeConfigInput(
           fixture.given.config, fixture.given.keys, store,
         ) as BridgeConfig;
-        const clock = { nowMs: () => Date.parse(fixture.given.clock) };
         new Bridge({ config, store, clock, audit, rateLimit, random,
           cimdTransport: outbound.transport, cimdResolver: outbound.resolver });
       } else {
@@ -98,6 +99,14 @@ async function runBoot(fixture: BootFixture): Promise<void> {
   } finally {
     try { await store.close(); } finally { globalThis.fetch = originalFetch; }
   }
+}
+
+function fixtureClock(value: string, fixtureId: string): ClockPort {
+  const parsed = Date.parse(value);
+  if (!Number.isFinite(parsed) || new Date(parsed).toISOString() !== value) {
+    throw new FixtureRunnerError(`${fixtureId}: given.clock is not a canonical UTC timestamp`);
+  }
+  return { nowMs: () => parsed };
 }
 
 function assertHttpResponse(response: ObservedMessage, fixture: HttpFixture): void {

@@ -5,19 +5,26 @@ import { FixtureRunnerError } from "./error.ts";
 export function sendRealHttp(input: {
   base: string; method: string; path: string; headers: Array<[string, string]>; body?: Buffer;
 }): Promise<ObservedMessage> {
+  if (/[\r\n]/u.test(input.method) || /[\r\n]/u.test(input.path)) {
+    throw new FixtureRunnerError("HTTP request method and path cannot contain CR or LF");
+  }
   for (const [name, value] of input.headers) {
     if (/[\r\n]/u.test(name) || /[\r\n]/u.test(value)) {
       throw new FixtureRunnerError("HTTP request headers cannot contain CR or LF");
     }
   }
+  const base = new URL(input.base);
+  const resolved = new URL(input.path, base);
+  if (resolved.origin !== base.origin) {
+    throw new FixtureRunnerError("HTTP request path cannot leave the mounted host");
+  }
   return new Promise((resolve, reject) => {
-    const target = new URL(input.path, input.base);
     const socket = new Socket(); const chunks: Buffer[] = [];
-    socket.connect(Number(target.port), target.hostname, () => {
+    socket.connect(Number(base.port), base.hostname, () => {
       const hasHost = input.headers.some(([name]) => name === "host");
       const hasLength = input.headers.some(([name]) => name === "content-length" || name === "transfer-encoding");
-      const lines = [`${input.method} ${target.pathname}${target.search} HTTP/1.1`,
-        ...(hasHost ? [] : [`Host: ${target.host}`]),
+      const lines = [`${input.method} ${input.path} HTTP/1.1`,
+        ...(hasHost ? [] : [`Host: ${base.host}`]),
         ...input.headers.map(([name, value]) => `${name}: ${value}`),
         ...(input.body === undefined || hasLength ? [] : [`Content-Length: ${input.body.byteLength}`]),
         "Connection: close", "", ""];

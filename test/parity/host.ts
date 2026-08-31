@@ -12,8 +12,9 @@ import { originOf, type BridgeConfig } from "../../src/config.ts";
 import { OAuthError } from "../../src/errors.ts";
 import type { IdentityPort } from "../../src/ports/identity.ts";
 import { RequestAuthorizer } from "../../src/verifier.ts";
-import type { AdapterKind, BodyValue, HeaderMap, ProtectedResource } from "./types.ts";
+import type { AdapterKind, HeaderMap, ProtectedResource } from "./types.ts";
 import { FixtureRunnerError } from "./error.ts";
+import { encodeResponseBody } from "./response-body.ts";
 
 const DISTINCT_HEADERS = Symbol("parityDistinctHeaders");
 const RAW_OUTCOMES = new WeakMap<Response, Outcome>();
@@ -58,8 +59,9 @@ async function protectedOutcome(
     return outcome;
   }
   if (!protectedResource.success) throw new FixtureRunnerError("protected handler ran without given.protectedResource.success");
-  return { status: protectedResource.success.status, headers: explicitHeaders(protectedResource.success.headers),
-    body: encodeBody(protectedResource.success.body) };
+  const responseHeaders = explicitHeaders(protectedResource.success.headers);
+  return { status: protectedResource.success.status, headers: responseHeaders,
+    body: encodeResponseBody(protectedResource.success.body, responseHeaders) };
 }
 
 async function mountFastify(
@@ -141,7 +143,6 @@ function explicitHeaders(headers: HeaderMap): Record<string, string | string[]> 
   }
   return result;
 }
-function encodeBody(body: BodyValue): Buffer { return "absent" in body ? Buffer.alloc(0) : Buffer.from(typeof body.value === "string" ? body.value : JSON.stringify(body.value)); }
 async function writeNode(response: ServerResponse, outcome: Outcome): Promise<void> { response.writeHead(outcome.status, outcome.headers); response.end(outcome.body); }
 function responseFrom(outcome: Outcome): Response {
   const headers = new Headers();

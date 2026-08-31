@@ -11,6 +11,7 @@ import { sendRealHttp } from "./parity/http-client.ts";
 import { clauseSource, compileJsonSchema, loadCorpus, validateChains } from "./parity/schema.ts";
 import { SeededRandom } from "./parity/random.ts";
 import { FixtureStore } from "./parity/store.ts";
+import { adapterForChainMember, adaptersForChain } from "./parity/adapters.ts";
 import type { BootFixture, HttpFixture } from "./parity/types.ts";
 
 test("fixture loader validates both section 8.4 drafts and their contract quotes", async () => {
@@ -47,6 +48,10 @@ test("request materialization and real HTTP reject header line injection", () =>
   assert.throws(() => materializeRequest({ method: "GET", path: "/", headers: {
     "x-fixture": { $capture: { fixture: "previous-fixture", name: "value", format: "raw" } },
   } }, captures), /cannot contain CR or LF/);
+  assert.throws(() => sendRealHttp({ base: "http://127.0.0.1:1", method: "GET", path: "/safe\r\nX: one",
+    headers: [] }), /method and path cannot contain CR or LF/);
+  assert.throws(() => sendRealHttp({ base: "http://127.0.0.1:1", method: "GET",
+    path: "//169.254.169.254/latest/meta-data", headers: [] }), /cannot leave the mounted host/);
 });
 
 test("chain captures insert only as complete inbound values", () => {
@@ -59,6 +64,14 @@ test("chain captures insert only as complete inbound values", () => {
   assert.deepEqual(request.headers, [["authorization", "Bearer captured-token"],
     ["content-type", "application/json"]]);
   assert.deepEqual(JSON.parse(String(request.body)), { token: "captured-token" });
+  const literal = materializeRequest({ method: "POST", path: "/", headers: {
+    "content-type": "application/json",
+  }, body: { json: { $capture: "ordinary-data", nested: { $capture: {
+    fixture: "previous-fixture", name: "token", format: "raw", extra: "ordinary-data",
+  } } } } }, captures);
+  assert.deepEqual(JSON.parse(String(literal.body)), { $capture: "ordinary-data", nested: { $capture: {
+    fixture: "previous-fixture", name: "token", format: "raw", extra: "ordinary-data",
+  } } });
   assert.throws(() => materializeRequest({ method: "GET", path: "/", headers: {
     "x-token": bearer,
   } }, captures), /valid only for an Authorization header/);
@@ -91,6 +104,14 @@ test("chain validation rejects capture names reused by another step", async () =
   second.chain = { id: "capture-chain", step: 2, previous: first.id };
   second.then.captures = [{ name: "token", source: { bodyPointer: "/other" } }];
   assert.throws(() => validateChains([first, second]), /duplicate capture name token/);
+});
+
+test("mixed-profile chains run portable members through every adapter", async () => {
+  const host = structuredClone(await hostFixture());
+  const portable = structuredClone(host); portable.profile = "portable";
+  assert.deepEqual(adaptersForChain([host, portable]), ["fastify", "express", "hono"]);
+  assert.equal(adapterForChainMember(host, "express"), "fastify");
+  assert.equal(adapterForChainMember(portable, "express"), "express");
 });
 
 test("response captures require one string selected by JSON Pointer or URL query", async () => {
@@ -188,6 +209,24 @@ test("boot execution enforces accepted and exact rejected outcomes", async () =>
   await runFixture(bridgeBoundary);
 });
 
+test("fixture clocks reject impossible dates before HTTP composition", async () => {
+  const fixture = await hostFixture();
+  const http = structuredClone(fixture);
+  http.given.clock = "2026-02-31T00:00:00.000Z";
+  http.given.config = {};
+  await assert.rejects(runFixture(http), /given\.clock is not a canonical UTC timestamp/);
+});
+
+test("fixture clocks reject impossible dates before boot composition", async () => {
+  const fixture = await hostFixture();
+  const { protectedResource: _ignored, ...given } = fixture.given;
+  const { when: _request, ...base } = fixture;
+  const boot: BootFixture = { ...base, kind: "boot", given: { ...given,
+    clock: "2026-13-01T00:00:00.000Z", entrypoint: "createBridgeConfig", config: {} },
+  then: { boot: { outcome: "accepted" }, outbound: [] } };
+  await assert.rejects(runFixture(boot), /given\.clock is not a canonical UTC timestamp/);
+});
+
 test("stored-DCR materialization retains literal nested fields while adding its port", async () => {
   const fixture = await hostFixture();
   const store = new FixtureStore({}, new SeededRandom("literal-dcr"));
@@ -272,6 +311,29 @@ test("given HTTP responses preserve distinct header occurrences", async () => {
   ]);
   assert.deepEqual(response.headers.getSetCookie(), ["a=1", "b=2"]);
   assert.throws(() => response.headers.get("x-fixture"), /multiple occurrences/);
+});
+
+test("scripted JSON string responses are serialized as JSON", async () => {
+  const url = "https://client.example.com/json-string";
+  const script = new OutboundScript([{ request: { method: "GET", url,
+    headers: {}, body: { absent: true } }, response: { status: 200,
+    headers: { "content-type": "application/json" }, body: { value: "ok" } } }]);
+  const outbound = await script.fetch(url);
+  assert.equal(await outbound.text(), '"ok"');
+});
+
+test("protected-resource JSON string responses are serialized as JSON", async () => {
+  const fixture = structuredClone(await hostFixture());
+  const authorization = fixture.when.request.headers?.authorization;
+  if (!Array.isArray(authorization) || typeof authorization[0] !== "string") {
+    assert.fail("host fixture authorization occurrences missing");
+  }
+  fixture.when.request.headers!.authorization = authorization[0];
+  fixture.given.protectedResource.success = { status: 200,
+    headers: { "content-type": "application/json" }, body: { value: "ok" } };
+  fixture.then = { status: 200, headers: { "content-type": { contains: "application/json" } },
+    body: { equals: "ok" }, outbound: [] };
+  await runFixture(fixture);
 });
 
 test("outbound observation preserves request header occurrences", async () => {

@@ -9,6 +9,7 @@ import {
   assertExactHeaders, assertMatcher, bodyObservation, headerObservation, observationMatches,
 } from "./matchers.ts";
 import { FixtureRunnerError } from "./error.ts";
+import { encodeResponseBody } from "./response-body.ts";
 
 export class RecordingAudit implements AuditPort {
   readonly events: AuthAuditEvent[] = [];
@@ -57,8 +58,9 @@ export class OutboundScript {
       const url = `https://${request.hostHeader}${request.requestTarget}`;
       const headers = { host: request.hostHeader, accept: "application/json", "accept-encoding": "identity" };
       const response = this.#next({ method: "GET", url, headers });
+      const responseHeaders = explicitHeaders(response.headers);
       return { status: response.status, redirected: false, finalUrl: url,
-        headersDistinct: explicitHeaders(response.headers), encodedBody: bodyChunks(response.body) };
+        headersDistinct: responseHeaders, encodedBody: bodyChunks(response.body, responseHeaders) };
     } };
     this.resolver = { async resolve() { return [{ address: "93.184.216.34", family: 4 }]; } };
   }
@@ -69,8 +71,9 @@ export class OutboundScript {
     const body = request.method === "GET" || request.method === "HEAD"
       ? undefined : Buffer.from(await request.arrayBuffer());
     const response = this.#next({ method: request.method, url: request.url, headers, body });
-    const encoded = encodeBody(response.body);
-    return scriptedResponse(encoded, response.status, explicitHeaders(response.headers));
+    const responseHeaders = explicitHeaders(response.headers);
+    const encoded = encodeResponseBody(response.body, responseHeaders);
+    return scriptedResponse(encoded, response.status, responseHeaders);
   };
 
   assertComplete(expected: OutboundCall[], label: string): void {
@@ -186,11 +189,6 @@ class DistinctHeaders {
   }
 }
 
-function encodeBody(body: BodyValue): Buffer {
-  if ("absent" in body) return Buffer.alloc(0);
-  return Buffer.from(typeof body.value === "string" ? body.value : JSON.stringify(body.value), "utf8");
-}
-
-async function* bodyChunks(body: BodyValue): AsyncGenerator<Uint8Array> {
-  const encoded = encodeBody(body); if (encoded.byteLength > 0) yield encoded;
+async function* bodyChunks(body: BodyValue, headers: Record<string, string[]>): AsyncGenerator<Uint8Array> {
+  const encoded = encodeResponseBody(body, headers); if (encoded.byteLength > 0) yield encoded;
 }

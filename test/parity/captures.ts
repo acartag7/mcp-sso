@@ -86,7 +86,16 @@ function captureValue(reference: CaptureReference, captures: CaptureValues): str
 }
 
 function isCapture(value: unknown): value is CaptureReference {
-  return typeof value === "object" && value !== null && Object.hasOwn(value, "$capture");
+  if (!isExactObject(value, ["$capture"])) return false;
+  const capture = value.$capture;
+  return isExactObject(capture, ["fixture", "name", "format"])
+    && typeof capture.fixture === "string" && typeof capture.name === "string"
+    && (capture.format === "raw" || capture.format === "bearer");
+}
+
+function isExactObject(value: unknown, keys: string[]): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    && Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 }
 
 function requireEssence(values: string[], expected: string, label: string): void {
