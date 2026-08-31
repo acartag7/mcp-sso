@@ -51,15 +51,10 @@
           "type": "string",
           "pattern": "^[0-9]+(\\.[0-9]+){0,2}[a-z]?$"
         },
-        "statement": {
-          "type": "string",
-          "description": "Append-only normative-statement anchor with a bijective base-26 lowercase suffix; required before a fixture freezes",
-          "pattern": "^[0-9]+(\\.[0-9]+){0,2}\\.[a-z]+$"
-        },
         "quote": {
           "type": "string",
           "minLength": 1,
-          "description": "Verbatim normative text this fixture pins"
+          "description": "Verbatim contract sentence this fixture pins"
         }
       }
     },
@@ -1328,16 +1323,7 @@
       },
       "then": {
         "properties": {
-          "receipt": {},
-          "contract": {
-            "type": "object",
-            "properties": {
-              "statement": {}
-            },
-            "required": [
-              "statement"
-            ]
-          }
+          "receipt": {}
         },
         "required": [
           "receipt"

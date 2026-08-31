@@ -16,8 +16,8 @@ FREEZE-LOG.md                every change to a frozen fixture, with the contract
 
 ## Rules in one screen
 
-- A fixture pins one contract statement by its append-only anchor and quotes the complete sentence. Reword the sentence, and the quote goes stale on purpose. A draft may omit the anchor only during the bootstrap migration; a frozen fixture may not.
-- Set `kind` to `fixture` for one real HTTP request or `boot` for exact startup acceptance or rejection. Rules covered by an executable suite use a suite receipt in `MANIFEST.json`; no rule is exempt from coverage.
+- A fixture pins one contract clause and quotes the complete sentence that it tests. Rewording the sentence makes the quote stale. `MANIFEST.json` lists every clause in §05–§17 and records its evidence or marks it uncovered.
+- Set `kind` to `fixture` for one real HTTP request or `boot` for exact startup acceptance or rejection. A clause covered by an executable suite uses a suite receipt in `MANIFEST.json`; no clause is exempt from the map.
 - Label each fixture `portable` or `host`. Portable fixtures count toward cross-implementation parity. Host fixtures cover the TypeScript reference envelope and do not count toward another implementation's parity claim.
 - Keep a fixture `draft` until the reference implementation's runner passes it unchanged. Freeze it only with a `receipt` that names the implementation, version, commit, and date.
 - One HTTP fixture, one request. A flow is a declared chain whose pre-state is the previous fixture's expected post-state. A named capture can carry an emitted string into a later step without pinning nondeterministic ES256 bytes.
