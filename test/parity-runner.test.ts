@@ -283,6 +283,8 @@ test("outbound scripts fail on an unconsumed or unmatched exchange", async () =>
     headers: { "content-type": "application/json" }, body: { value: {} } } };
   assert.throws(() => new OutboundScript([exchange]).assertComplete([], "fixture"), /all outbound scripts consumed/);
   await assert.rejects(() => new OutboundScript([]).fetch("https://client.example.com/metadata"), /unmatched outbound call/);
+  await assert.rejects(() => new OutboundScript([]).resolver.resolve("client.example.com"),
+    /unmatched DnsResolver\.resolve call/);
 });
 
 test("given HTTP exchanges match independently of their listed order", async () => {

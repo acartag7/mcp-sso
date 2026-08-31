@@ -62,7 +62,9 @@ export class OutboundScript {
       return { status: response.status, redirected: false, finalUrl: url,
         headersDistinct: responseHeaders, encodedBody: bodyChunks(response.body, responseHeaders) };
     } };
-    this.resolver = { async resolve() { return [{ address: "93.184.216.34", family: 4 }]; } };
+    this.resolver = { async resolve(hostname) {
+      throw new FixtureRunnerError(`unmatched DnsResolver.resolve call: ${hostname}`);
+    } };
   }
 
   readonly fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
