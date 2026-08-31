@@ -270,4 +270,6 @@ interface RandomPort { bytes(length: number): Uint8Array; }
 
 `RandomPort` is the entropy port for fixture composition. `systemRandom` is the default and uses Node's CSPRNG. `randomBytesFrom` validates the requested length, returned type, and returned byte count before a generated value uses the result.
 
-A parity-fixture runner may set `RandomPort` to compose deterministic fixtures. Setting `RandomPort` in a production composition is unsupported and falls outside every security claim.
+A parity-fixture runner may set `RandomPort` to compose deterministic fixtures. Each fixture composition creates one port instance and passes it through the complete application composition. Each component captures that port reference at construction and does not replace it.
+
+The library has no process-global setter or mutable entropy default. Setting `RandomPort` in a production composition is unsupported and falls outside every security claim.
