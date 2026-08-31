@@ -8,6 +8,16 @@ const PRIMARY_KEYS: Record<keyof Required<LogicalState>, string> = {
   authorization_code: "code_hash", consent_jti: "jti", refresh_token: "token_hash",
   revoked_family: "family_id", client_registration: "client_id", store_instance: "instance_id",
 };
+const STATE_FIELDS: Record<keyof Required<LogicalState>, readonly string[]> = {
+  authorization_code: ["code_hash", "client_id", "subject", "redirect_uri", "resource", "scopes",
+    "code_challenge", "code_challenge_method", "expires_at", "grant_generation"],
+  consent_jti: ["jti", "expires_at"],
+  refresh_token: ["token_hash", "family_id", "previous_token_hash", "client_id", "subject", "resource",
+    "scopes", "expires_at", "consumed_at", "grant_generation"],
+  revoked_family: ["family_id", "resource", "revoked_at", "grant_generation"],
+  client_registration: ["client_id", "redirect_uris", "application_type", "issued_at_epoch"],
+  store_instance: ["instance_id"],
+};
 const KINDS = Object.keys(PRIMARY_KEYS) as Array<keyof Required<LogicalState>>;
 
 export function assertAudit(events: AuthAuditEvent[], expected: AuditAssertion, label: string): void {
@@ -33,6 +43,11 @@ export function assertState(observed: Required<LogicalState>, expected: StateAss
     }
   }
   for (const selector of expected.absent) {
+    for (const field of Object.keys(selector.where)) {
+      if (!STATE_FIELDS[selector.kind].includes(field)) {
+        throw new FixtureRunnerError(`${label} state selector has unknown ${selector.kind} field ${field}`);
+      }
+    }
     const found = actual[selector.kind].some((row) => partialSelectorMatches(
       row as unknown as Record<string, unknown>, selector.where,
     ));

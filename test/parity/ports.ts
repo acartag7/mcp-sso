@@ -54,6 +54,10 @@ export class OutboundScript {
   readonly #used = new Set<number>();
   constructor(exchanges: HttpExchange[]) {
     this.exchanges = exchanges;
+    const declaredHosts = new Set(exchanges.flatMap((exchange) => {
+      const url = new URL(exchange.request.url);
+      return url.protocol === "https:" ? [url.hostname] : [];
+    }));
     this.transport = { connectAndGet: async (request) => {
       const url = `https://${request.hostHeader}${request.requestTarget}`;
       const headers = { host: request.hostHeader, accept: "application/json", "accept-encoding": "identity" };
@@ -63,7 +67,10 @@ export class OutboundScript {
         headersDistinct: responseHeaders, encodedBody: bodyChunks(response.body, responseHeaders) };
     } };
     this.resolver = { async resolve(hostname) {
-      throw new FixtureRunnerError(`unmatched DnsResolver.resolve call: ${hostname}`);
+      if (!declaredHosts.has(hostname)) {
+        throw new FixtureRunnerError(`unmatched DnsResolver.resolve call: ${hostname}`);
+      }
+      return [{ address: "93.184.216.34", family: 4 }];
     } };
   }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { assertAudit, assertState } from "./parity/assertions.ts";
 import { captureResponse, materializeRequest } from "./parity/captures.ts";
-import { materializeConfigInput, publicKey } from "./parity/config.ts";
+import { materializeConfig, materializeConfigInput, publicKey } from "./parity/config.ts";
 import { FixtureRunnerError } from "./parity/error.ts";
 import { bodyObservation, matcherMatches } from "./parity/matchers.ts";
 import { OutboundScript } from "./parity/ports.ts";
@@ -12,6 +12,7 @@ import { clauseSource, compileJsonSchema, loadCorpus, validateChains } from "./p
 import { SeededRandom } from "./parity/random.ts";
 import { FixtureStore } from "./parity/store.ts";
 import { adapterForChainMember, adaptersForChain } from "./parity/adapters.ts";
+import { CimdResolver } from "../src/cimd/resolve.ts";
 import type { BootFixture, HttpFixture } from "./parity/types.ts";
 
 test("fixture loader validates both section 8.4 drafts and their contract quotes", async () => {
@@ -275,16 +276,49 @@ test("audit and logical state assertions are exact and honor absent selectors", 
   assert.throws(() => assertState(state, { mode: "exact", rows: {}, absent: [] }, "fixture"), /exact state/);
   assert.throws(() => assertState(state, { mode: "contains", rows: {}, absent: [{
     kind: "store_instance", where: { instance_id: "fixture-store" } }] }, "fixture"), /forbidden state selector/);
+  for (const kind of ["authorization_code", "consent_jti", "refresh_token", "revoked_family",
+    "client_registration", "store_instance"] as const) {
+    assert.throws(() => assertState(state, { mode: "contains", rows: {}, absent: [{
+      kind, where: { misspelled_field: "value" } }] }, "fixture"), /state selector has unknown/);
+  }
 });
 
 test("outbound scripts fail on an unconsumed or unmatched exchange", async () => {
   const exchange = { request: { method: "GET", url: "https://client.example.com/metadata",
     headers: {}, body: { absent: true } as const }, response: { status: 200,
     headers: { "content-type": "application/json" }, body: { value: {} } } };
-  assert.throws(() => new OutboundScript([exchange]).assertComplete([], "fixture"), /all outbound scripts consumed/);
+  const declared = new OutboundScript([exchange]);
+  assert.throws(() => declared.assertComplete([], "fixture"), /all outbound scripts consumed/);
   await assert.rejects(() => new OutboundScript([]).fetch("https://client.example.com/metadata"), /unmatched outbound call/);
+  assert.deepEqual(await declared.resolver.resolve("client.example.com"), [{ address: "93.184.216.34", family: 4 }]);
   await assert.rejects(() => new OutboundScript([]).resolver.resolve("client.example.com"),
     /unmatched DnsResolver\.resolve call/);
+});
+
+test("declared CIMD exchanges pass the guarded resolver without network I/O", async () => {
+  const fixture = await hostFixture();
+  const store = new FixtureStore({}, new SeededRandom("declared-cimd"));
+  const url = "https://client.example.com/metadata";
+  const redirectUri = "https://client.example.com/callback";
+  const exchange = { request: { method: "GET", url,
+    headers: {}, body: { absent: true } as const }, response: { status: 200,
+    headers: { "content-type": "application/json" }, body: { value: {
+      client_id: url, client_name: "Fixture client", redirect_uris: [redirectUri],
+    } } } };
+  const script = new OutboundScript([exchange]);
+  try {
+    const config = await materializeConfig({ ...fixture.given.config,
+      cimd: { enabled: true } }, fixture.given.keys, store);
+    const resolver = new CimdResolver({ config,
+      clock: { nowMs: () => Date.parse(fixture.given.clock) }, audit: { async writeAuthEvent() {} },
+      cimdTransport: script.transport, cimdResolver: script.resolver });
+    const resolved = await resolver.resolve({ clientId: url, redirectUri });
+    assert.equal(resolved.registration.client_id, url);
+    script.assertComplete([{ method: "GET", url, headers: {
+      host: { equals: "client.example.com" }, accept: { equals: "application/json" },
+      "accept-encoding": { equals: "identity" },
+    }, body: { absent: true } }], "fixture");
+  } finally { await store.close(); }
 });
 
 test("given HTTP exchanges match independently of their listed order", async () => {
