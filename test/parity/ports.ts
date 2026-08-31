@@ -65,17 +65,12 @@ export class OutboundScript {
 
   readonly fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
-    const headers: Record<string, string> = {};
-    request.headers.forEach((value, name) => { headers[name] = value; });
+    const headers = observedRequestHeaders(input, init, request);
     const body = request.method === "GET" || request.method === "HEAD"
       ? undefined : Buffer.from(await request.arrayBuffer());
     const response = this.#next({ method: request.method, url: request.url, headers, body });
-    const responseHeaders = new Headers();
-    for (const [name, values] of Object.entries(explicitHeaders(response.headers))) {
-      for (const value of values) responseHeaders.append(name, value);
-    }
     const encoded = encodeBody(response.body);
-    return new Response(encoded.byteLength === 0 ? null : encoded, { status: response.status, headers: responseHeaders });
+    return scriptedResponse(encoded, response.status, explicitHeaders(response.headers));
   };
 
   assertComplete(expected: OutboundCall[], label: string): void {
@@ -101,6 +96,29 @@ export class OutboundScript {
   }
 }
 
+function observedRequestHeaders(
+  input: string | URL | Request, init: RequestInit | undefined, request: Request,
+): Record<string, string | string[]> {
+  if (Array.isArray(init?.headers)) {
+    const occurrences = new Map<string, string[]>();
+    for (const [rawName, value] of init.headers) {
+      const name = rawName.toLowerCase();
+      occurrences.set(name, [...(occurrences.get(name) ?? []), value]);
+    }
+    return Object.fromEntries([...occurrences].map(([name, values]) => [
+      name, values.length === 1 ? values[0]! : values,
+    ]));
+  }
+  const headers: Record<string, string | string[]> = {};
+  request.headers.forEach((value, name) => { headers[name] = value; });
+  const source = init?.headers ?? (input instanceof Request ? input.headers : undefined);
+  if (source instanceof Headers) {
+    const cookies = source.getSetCookie();
+    if (cookies.length > 1) headers["set-cookie"] = cookies;
+  }
+  return headers;
+}
+
 function exchangeMatches(call: ObservedOutbound, exchange: HttpExchange): boolean {
   if (call.method !== exchange.request.method || call.url !== exchange.request.url) return false;
   if (!Object.entries(exchange.request.headers).every(([name, matcher]) =>
@@ -123,6 +141,49 @@ function explicitHeaders(headers: Record<string, unknown>): Record<string, strin
     result[name] = values as string[];
   }
   return result;
+}
+
+function scriptedResponse(body: Buffer, status: number, headers: Record<string, string[]>): Response {
+  const response = new Response(body.byteLength === 0 ? null : body, { status });
+  const distinct = new DistinctHeaders(headers) as unknown as Headers;
+  Object.defineProperty(response, "headers", { value: distinct });
+  Object.defineProperty(response, "clone", { value: () => {
+    const clone = Response.prototype.clone.call(response);
+    Object.defineProperty(clone, "headers", { value: new DistinctHeaders(headers) as unknown as Headers });
+    return clone;
+  } });
+  return response;
+}
+
+class DistinctHeaders {
+  readonly #entries: Array<[string, string]>;
+  constructor(headers: Record<string, string[]>) {
+    this.#entries = Object.entries(headers).flatMap(([name, values]) =>
+      values.map((value): [string, string] => [name, value]));
+  }
+  append(): never { throw new FixtureRunnerError("scripted response headers are read-only"); }
+  delete(): never { throw new FixtureRunnerError("scripted response headers are read-only"); }
+  set(): never { throw new FixtureRunnerError("scripted response headers are read-only"); }
+  get(name: string): string | null {
+    const values = this.#values(name);
+    if (values.length > 1) throw new FixtureRunnerError(`outbound response header ${name} has multiple occurrences`);
+    return values[0] ?? null;
+  }
+  getSetCookie(): string[] { return this.#values("set-cookie"); }
+  has(name: string): boolean { return this.#values(name).length > 0; }
+  forEach(callback: (value: string, key: string, parent: Headers) => void, thisArg?: unknown): void {
+    for (const [name, value] of this.#entries) callback.call(thisArg, value, name, this as unknown as Headers);
+  }
+  *entries(): IterableIterator<[string, string]> {
+    for (const [name, value] of this.#entries) yield [name, value];
+  }
+  *keys(): IterableIterator<string> { for (const [name] of this.#entries) yield name; }
+  *values(): IterableIterator<string> { for (const [, value] of this.#entries) yield value; }
+  [Symbol.iterator](): IterableIterator<[string, string]> { return this.entries(); }
+  #values(name: string): string[] {
+    const lower = name.toLowerCase();
+    return this.#entries.filter(([candidate]) => candidate === lower).map(([, value]) => value);
+  }
 }
 
 function encodeBody(body: BodyValue): Buffer {

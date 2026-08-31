@@ -20,13 +20,13 @@ export function materializeRequest(
   }
   if ("form" in body) {
     requireEssence(contentTypes, "application/x-www-form-urlencoded", "form");
-    const fields = body.form.map(({ name, value }) => [name, resolveString(value, captures)] as [string, string]);
+    const fields = body.form.map(({ name, value }) => [name, resolveString(value, captures, false)] as [string, string]);
     return { method: request.method, path: request.path, headers,
       body: Buffer.from(new URLSearchParams(fields).toString(), "utf8") };
   }
   if (contentTypes.length !== 1) throw new FixtureRunnerError("text body requires one Content-Type occurrence");
   return { method: request.method, path: request.path, headers,
-    body: Buffer.from(resolveString(body.text, captures), "utf8") };
+    body: Buffer.from(resolveString(body.text, captures, false), "utf8") };
 }
 
 export async function captureResponse(
@@ -50,17 +50,14 @@ function resolveHeaders(headers: HeaderMap, captures: CaptureValues): Array<[str
   const output: Array<[string, string]> = [];
   for (const [name, raw] of Object.entries(headers)) {
     for (const value of Array.isArray(raw) ? raw : [raw]) {
-      if (typeof value === "object" && value.$capture.format === "bearer" && name !== "authorization") {
-        throw new FixtureRunnerError("bearer capture format is valid only for an Authorization header");
-      }
-      output.push([name, resolveString(value, captures)]);
+      output.push([name, resolveString(value, captures, name === "authorization")]);
     }
   }
   return output;
 }
 
 function resolveJson(value: unknown, captures: CaptureValues): unknown {
-  if (isCapture(value)) return captureValue(value, captures);
+  if (isCapture(value)) return resolveString(value, captures, false);
   if (Array.isArray(value)) return value.map((entry) => resolveJson(entry, captures));
   if (typeof value === "object" && value !== null) {
     return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, resolveJson(entry, captures)]));
@@ -68,8 +65,11 @@ function resolveJson(value: unknown, captures: CaptureValues): unknown {
   return value;
 }
 
-function resolveString(value: string | CaptureReference, captures: CaptureValues): string {
+function resolveString(value: string | CaptureReference, captures: CaptureValues, allowBearer: boolean): string {
   if (typeof value === "string") return value;
+  if (value.$capture.format === "bearer" && !allowBearer) {
+    throw new FixtureRunnerError("bearer capture format is valid only for an Authorization header");
+  }
   const raw = captureValue(value, captures);
   return value.$capture.format === "bearer" ? `Bearer ${raw}` : raw;
 }

@@ -7,7 +7,7 @@ import { FixtureRunnerError } from "./parity/error.ts";
 import { bodyObservation, matcherMatches } from "./parity/matchers.ts";
 import { OutboundScript } from "./parity/ports.ts";
 import { runFixture } from "./parity/runner.ts";
-import { clauseSource, compileJsonSchema, loadCorpus } from "./parity/schema.ts";
+import { clauseSource, compileJsonSchema, loadCorpus, validateChains } from "./parity/schema.ts";
 import type { BootFixture, HttpFixture } from "./parity/types.ts";
 
 test("fixture loader validates both section 8.4 drafts and their contract quotes", async () => {
@@ -48,6 +48,32 @@ test("chain captures insert only as complete inbound values", () => {
   assert.throws(() => materializeRequest({ method: "GET", path: "/", headers: {
     authorization: { $capture: { fixture: "other-chain", name: "token", format: "bearer" } },
   } }, captures), /missing or out-of-chain capture/);
+});
+
+test("bearer captures are invalid in every request-body encoding", () => {
+  const captures = new Map([["previous-fixture", new Map([["token", "captured-token"]])]]);
+  const bearer = { $capture: { fixture: "previous-fixture", name: "token", format: "bearer" as const } };
+  assert.throws(() => materializeRequest({ method: "POST", path: "/", headers: {
+    "content-type": "application/json",
+  }, body: { json: { token: bearer } } }, captures), /valid only for an Authorization header/);
+  assert.throws(() => materializeRequest({ method: "POST", path: "/", headers: {
+    "content-type": "application/x-www-form-urlencoded",
+  }, body: { form: [{ name: "token", value: bearer }] } }, captures), /valid only for an Authorization header/);
+  assert.throws(() => materializeRequest({ method: "POST", path: "/", headers: {
+    "content-type": "text/plain",
+  }, body: { text: bearer } }, captures), /valid only for an Authorization header/);
+});
+
+test("chain validation rejects capture names reused by another step", async () => {
+  const first = structuredClone(await hostFixture());
+  const second = structuredClone(first);
+  first.id = "08-resource-server-verifier/8.4-chain-first";
+  first.chain = { id: "capture-chain", step: 1 };
+  first.then.captures = [{ name: "token", source: { bodyPointer: "/token" } }];
+  second.id = "08-resource-server-verifier/8.4-chain-second";
+  second.chain = { id: "capture-chain", step: 2, previous: first.id };
+  second.then.captures = [{ name: "token", source: { bodyPointer: "/other" } }];
+  assert.throws(() => validateChains([first, second]), /duplicate capture name token/);
 });
 
 test("response captures require one string selected by JSON Pointer or URL query", async () => {
@@ -176,6 +202,31 @@ test("given HTTP exchanges match independently of their listed order", async () 
     { method: "GET", url: second.request.url, headers: {}, body: { absent: true } },
     { method: "GET", url: first.request.url, headers: {}, body: { absent: true } },
   ], "fixture");
+});
+
+test("given HTTP responses preserve distinct header occurrences", async () => {
+  const url = "https://client.example.com/repeated-response";
+  const script = new OutboundScript([{ request: { method: "GET", url,
+    headers: {}, body: { absent: true } }, response: { status: 200,
+    headers: { "x-fixture": ["one", "two"], "set-cookie": ["a=1", "b=2"] },
+    body: { absent: true } } }]);
+  const response = await script.fetch(url);
+  assert.deepEqual([...response.headers], [
+    ["x-fixture", "one"], ["x-fixture", "two"], ["set-cookie", "a=1"], ["set-cookie", "b=2"],
+  ]);
+  assert.deepEqual(response.headers.getSetCookie(), ["a=1", "b=2"]);
+  assert.throws(() => response.headers.get("x-fixture"), /multiple occurrences/);
+});
+
+test("outbound observation preserves request header occurrences", async () => {
+  const url = "https://client.example.com/repeated-request";
+  const script = new OutboundScript([{ request: { method: "GET", url,
+    headers: { "x-fixture": { equals: ["one", "two"] } }, body: { absent: true } },
+  response: { status: 204, headers: {}, body: { absent: true } } }]);
+  await script.fetch(url, { headers: [["x-fixture", "one"], ["x-fixture", "two"]] });
+  script.assertComplete([{ method: "GET", url, headers: {
+    "x-fixture": { equals: ["one", "two"] },
+  }, body: { absent: true } }], "fixture");
 });
 
 test("then outbound headers reject an extra observed header", async () => {
