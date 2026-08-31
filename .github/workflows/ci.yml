@@ -68,6 +68,8 @@ jobs:
       - name: assert integration env present
         run: |
           node -e "if(process.env.RUN_INTEGRATION!=='true'||!process.env.MYSQL_URL||!process.env.REDIS_URL){console.error('FATAL: RUN_INTEGRATION/MYSQL_URL/REDIS_URL missing — adapters would be silently skipped');process.exit(1)}else{console.log('RUN_INTEGRATION + MYSQL_URL + REDIS_URL present')}"
+      - name: run parity fixtures
+        run: pnpm test:parity
       - run: pnpm test
       - name: build smoke
         run: pnpm build

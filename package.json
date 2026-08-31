@@ -88,6 +88,7 @@
   ],
   "scripts": {
     "test": "node --test --test-reporter=spec",
+    "test:parity": "node --test --test-reporter=spec test/parity-fixtures.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "prepublishOnly": "pnpm run build",
@@ -107,12 +108,15 @@
     "@modelcontextprotocol/sdk": "1.29.0",
     "@types/express": "5.0.6",
     "@types/node": "24.13.2",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
     "express": "5.2.1",
     "fastify": "5.8.5",
     "hono": "4.12.34",
     "ioredis": "5.11.1",
     "mysql2": "3.22.5",
     "playwright-core": "1.62.1",
+    "re2js": "2.8.6",
     "typescript": "6.0.3"
   },
   "peerDependencies": {

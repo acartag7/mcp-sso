@@ -13,6 +13,7 @@ import { OAuthError } from "./errors.ts";
 import { assertAllowedRedirectUri, assertRegistrationRedirectPolicy } from "./redirect.ts";
 import { writeAuditBestEffort } from "./audit/best-effort.ts";
 import { callPort } from "./port-failure.ts";
+import { randomBytesFrom, systemRandom, type RandomPort } from "./ports/random.ts";
 
 const MAX_GRANT_TYPES = 32;
 const MAX_GRANT_TYPE_BYTES = 256;
@@ -21,6 +22,7 @@ export interface RegisterDeps {
   config: BridgeConfig;
   clock: ClockPort;
   audit: AuditPort;
+  random?: RandomPort;
 }
 
 export interface RegisterInput {
@@ -83,7 +85,7 @@ export async function registerClient(deps: RegisterDeps, input: RegisterInput): 
       if (config.dcr.mode === "stored") assertRegistrationRedirectPolicy(uri, applicationType);
       return uri;
     });
-    const clientId = `mcpdc_${cryptoRandom()}`;
+    const clientId = `mcpdc_${cryptoRandom(deps.random)}`;
     const issuedAt = Math.floor(finiteClockSnapshot(operationClock) / 1000);
     if (config.dcr.mode === "stored") {
       const clientStore = config.dcr.store;
@@ -142,8 +144,11 @@ function metadataError(message: string): OAuthError {
   return new OAuthError("invalid_client_metadata", message);
 }
 
-function cryptoRandom(): string {
-  return globalThis.crypto.randomUUID().replaceAll("-", "");
+function cryptoRandom(random: RandomPort = systemRandom): string {
+  const bytes = randomBytesFrom(random, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  return bytes.toString("hex");
 }
 
 function hostOf(value: string): string | undefined {

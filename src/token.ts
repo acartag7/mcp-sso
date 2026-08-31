@@ -15,11 +15,13 @@ import { revokeRefreshToken } from "./token-revoke.ts";
 import { assertStoredDcrGenerationStore, expectedStoredDcrGrantGeneration, hasExpectedGrantGeneration } from "./stored-dcr-generation.ts";
 import { callPort } from "./port-failure.ts";
 import { rotateRefreshTokenSnapshot, snapshotAuthCodeRecord } from "./port-result.ts";
+import { systemRandom, type RandomPort } from "./ports/random.ts";
 export interface OAuthTokenDeps {
   config: BridgeConfig;
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
+  random?: RandomPort;
 }
 export interface AuthorizationCodeGrantInput {
   grantType?: string;
@@ -70,12 +72,14 @@ export class OAuthTokenUseCase {
   private readonly store: StorePort;
   private readonly clock: ClockPort;
   private readonly audit: AuditPort;
+  private readonly random: RandomPort;
 
   constructor(deps: OAuthTokenDeps) {
     this.config = deps.config;
     this.store = deps.store;
     this.clock = deps.clock;
     this.audit = deps.audit;
+    this.random = deps.random ?? systemRandom;
     assertStoredDcrGenerationStore(this.config, this.store);
   }
   async exchangeAuthorizationCode(input: AuthorizationCodeGrantInput): Promise<UserTokenResponse> {
@@ -86,7 +90,7 @@ export class OAuthTokenUseCase {
       }
       const record = await this.consumeValidCode(input, operationClock);
       if (record.subject.startsWith("mcc_")) throw new OAuthError("invalid_grant", "Grant subject uses the reserved machine-client namespace"); // pre-side-effect (§9.3): code burned, NO refresh token saved, no success audited
-      const refreshToken = generateRefreshToken();
+      const refreshToken = generateRefreshToken(undefined, this.random);
       const familyId = parseRefreshFamilyId(refreshToken);
       if (!familyId) throw new OAuthError("server_error", "Refresh token generation failed", 500);
       const prepared = await this.tokenResponse(record, refreshToken, operationClock);
@@ -112,7 +116,7 @@ export class OAuthTokenUseCase {
       const raw = requiredStr(input.refreshToken, "refresh_token");
       const familyId = parseRefreshFamilyId(raw);
       if (!familyId) throw new OAuthError("invalid_grant", "Refresh token is invalid");
-      const nextRaw = generateRefreshToken(familyId);
+      const nextRaw = generateRefreshToken(familyId, this.random);
       const previousHash = sha256Hex(raw);
       const rotatedAtIso = new Date(finiteClockSnapshot(operationClock)).toISOString();
       const rotated = await rotateRefreshTokenSnapshot(this.store, previousHash, {

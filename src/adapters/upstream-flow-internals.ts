@@ -4,9 +4,10 @@
 // here except jose (HS256 sign/verify) and node:crypto (timing-safe compare);
 // the clock is passed in (no ambient time). Everything is framework-free.
 
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import { AuthConfigError, type BridgeConfig } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
+import { randomBytesFrom, systemRandom, type RandomPort } from "../ports/random.ts";
 import { buildAuthorizationErrorRedirect } from "../challenge.ts";
 import { headerString, queryString, resourceParam, type NormRequest, type NormResponse } from "./http.ts";
 import { OAUTH_PARAM_KEYS } from "./authorize-params.ts";
@@ -137,8 +138,8 @@ export function timingSafeStringEqual(a: string, b: string): boolean {
 
 export const CALLBACK_DUP_KEYS_EXPORT = CALLBACK_DUP_KEYS;
 
-export function randomFlowToken(): string {
-  return randomBytes(32).toString("base64url");
+export function randomFlowToken(random: RandomPort = systemRandom): string {
+  return randomBytesFrom(random, 32).toString("base64url");
 }
 
 export function gatherOAuthParams(req: NormRequest): Record<string, string> {

@@ -4,12 +4,15 @@ import type { ClockPort } from "../ports/clock.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import type { StorePort } from "../ports/store.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
+import type { RandomPort } from "../ports/random.ts";
 
 export interface BridgeDeps {
   config: BridgeConfig;
   store: StorePort;
   clock: ClockPort;
   audit: AuditPort;
+  /** Optional deterministic entropy seam for fixture composition. */
+  random?: RandomPort;
   /** Optional Bridge/CIMD limiter for register, approve, token, revoke,
    *  direct identity, and document resolution. Stored DCR requires a bounded
    *  non-noop port; admitted stateless compositions use no-op if absent. */

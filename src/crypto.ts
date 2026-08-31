@@ -1,5 +1,5 @@
 // Crypto and token contracts (§7): pinned algorithms, separate keys, cached imports.
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify, type JWK, type JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts"; import { identitySubject } from "./identity-boundary.ts";
 import type { BridgeConfig } from "./config.ts";
@@ -7,7 +7,7 @@ import { scopeString, type CredentialKind } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
 import { numericDateIso } from "./numeric-date.ts"; import { consentStoreInstanceId } from "./consent-store-binding.ts";
-
+import { randomBytesFrom, systemRandom, type RandomPort } from "./ports/random.ts";
 const CONSENT_AUDIENCE = "mcp-sso/consent";
 const CONSENT_TYP = "mcp-sso-consent";
 export const MAX_CONSENT_TOKEN_BYTES = 192 * 1024;
@@ -48,21 +48,21 @@ export function sha256Hex(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-export function generateAuthorizationCode(): string {
-  return `${CODE_PREFIX}_${base64url(randomBytes(32))}`;
+export function generateAuthorizationCode(random: RandomPort = systemRandom): string {
+  return `${CODE_PREFIX}_${base64url(randomBytesFrom(random, 32))}`;
 }
 
-export function generateRefreshFamilyId(): string {
-  return base64url(randomBytes(18));
+export function generateRefreshFamilyId(random: RandomPort = systemRandom): string {
+  return base64url(randomBytesFrom(random, 18));
 }
 
 /** Single-use id minted into each consent token; consumed on approve (§7.1). */
-export function generateConsentJti(): string {
-  return base64url(randomBytes(18));
+export function generateConsentJti(random: RandomPort = systemRandom): string {
+  return base64url(randomBytesFrom(random, 18));
 }
 
-export function generateRefreshToken(familyId: string = generateRefreshFamilyId()): string {
-  return `${REFRESH_PREFIX}.${familyId}.${base64url(randomBytes(32))}`;
+export function generateRefreshToken(familyId?: string, random: RandomPort = systemRandom): string {
+  return `${REFRESH_PREFIX}.${familyId ?? generateRefreshFamilyId(random)}.${base64url(randomBytesFrom(random, 32))}`;
 }
 
 export function parseRefreshFamilyId(refreshToken: string): string | null {
@@ -87,12 +87,12 @@ export function pkceChallenge(verifier: string): string {
   return base64url(createHash("sha256").update(verifier).digest());
 }
 
-export async function signConsentToken(claims: ConsentRequestClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
+export async function signConsentToken(claims: ConsentRequestClaims, config: BridgeConfig, clock: ClockPort, random: RandomPort = systemRandom): Promise<string> {
   const subject = identitySubject(claims.subject); const now = nowSeconds(clock, config.consentTokenTtlSeconds);
   const storeInstanceId = claims.storeInstanceId ?? await consentStoreInstanceId(config);
   const token = await new SignJWT({
     typ: CONSENT_TYP,
-    jti: generateConsentJti(),
+    jti: generateConsentJti(random),
     client_id: claims.clientId,
     redirect_uri: claims.redirectUri,
     resource: claims.resource,

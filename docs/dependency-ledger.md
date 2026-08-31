@@ -45,6 +45,8 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 |---|---|---|---|---|
 | [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | ✅ | Type-checking + the publish `tsc` build. |
 | [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | ✅ | Node 24 typings. Matches the `engines.node >=24` target. |
+| [`ajv`](https://ajv.js.org/) | `8.20.0` | 2026-04-24 | ✅ | JSON Schema 2020-12 validation for parity fixtures and JSON body assertions. |
+| [`ajv-formats`](https://github.com/ajv-validator/ajv-formats) | `3.0.1` | 2024-03-30 | ✅ | Standard URI format validation used by the parity-fixture schema. |
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | ✅ | The official MCP SDK, used by end-to-end tests and every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dependency of the mcp-sso package itself. |
 | [`@fastify/rate-limit`](https://github.com/fastify/fastify-rate-limit) | `11.2.0` | 2026-07-29 | ✅ | Real fail-closed `/mcp` middleware for the Fastify examples, generated starter, and isolated helper subpath. Also an optional peer. Not loaded by the root/core entry. |
 | [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | ✅ | Reference framework adapter, dev/test + optional peer. |
@@ -54,6 +56,7 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 | [`mysql2`](https://github.com/sidorares/node-mysql2) | `3.22.5` | 2026-06-06 | ✅ | The `/store/mysql` `StorePort` adapter, dev/test + optional peer. |
 | [`ioredis`](https://github.com/redis/ioredis) | `5.11.1` | 2026-06-04 | ✅ | The `/rate-limit/redis` `RateLimitPort` adapter, dev/test + optional peer. |
 | [`playwright-core`](https://github.com/microsoft/playwright) | `1.62.1` | 2026-07-30 | ✅ | The browser driver the live rehearsal uses to sign the provisioned test users in through the real identity-provider pages (`scripts/live/drive-identity.mjs`). `playwright-core` only: it downloads no browser and drives the Google Chrome already installed on the machine, or a remote browser over CDP. Loaded in exactly one file, `scripts/live/drive-identity-browser.mjs`, which only opens a browser; never by the library, the examples, or `pnpm test`, whose driver coverage runs against `scripts/live/drive-identity-pages.mjs`. |
+| [`re2js`](https://github.com/le0pard/re2js) | `2.8.6` | 2026-07-05 | ✅ | Pure JavaScript RE2 parser and matcher for parity-fixture regular-expression assertions. |
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite` (built in). No bundler, no test framework, no postinstall, ever.
 
@@ -137,6 +140,8 @@ The following block is the machine-readable source used by `check:deps`. The hum
     "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
     "@types/express": { "version": "5.0.6", "published": "2025-12-01T20:35:51.488Z" },
     "@types/node": { "version": "24.13.2", "published": "2026-06-10T22:15:29.361Z" },
+    "ajv": { "version": "8.20.0", "published": "2026-04-24T15:22:16.529Z" },
+    "ajv-formats": { "version": "3.0.1", "published": "2024-03-30T11:30:26.728Z" },
     "express": { "version": "5.2.1", "published": "2025-12-01T20:49:43.268Z" },
     "fastify": { "version": "5.8.5", "published": "2026-04-14T12:07:12.232Z" },
     "hono": { "version": "4.12.34", "published": "2026-08-03T02:36:40.543Z" },
@@ -144,6 +149,7 @@ The following block is the machine-readable source used by `check:deps`. The hum
     "jose": { "version": "6.2.3", "published": "2026-04-27T15:23:35.019Z" },
     "mysql2": { "version": "3.22.5", "published": "2026-06-06T08:10:39.646Z" },
     "playwright-core": { "version": "1.62.1", "published": "2026-07-30T16:36:51.295Z" },
+    "re2js": { "version": "2.8.6", "published": "2026-07-05T18:46:40.385Z" },
     "pnpm": { "version": "10.34.4", "published": "2026-06-18T22:30:33.318Z" },
     "typescript": { "version": "6.0.3", "published": "2026-04-16T23:38:27.905Z" }
   },
