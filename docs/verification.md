@@ -215,7 +215,7 @@ Run these checks after the source-tree gates and before tagging a release.
 | Scenario | Required result |
 | --- | --- |
 | Source-tree gates | `pnpm run typecheck`, `pnpm run check:lines`, `pnpm run check:seams`, `pnpm run check:deps`, `pnpm test`, and `pnpm run build` pass from a clean tree. |
-| `npm pack --dry-run` | The tarball contains `dist/`, `docs/`, `README.md`, `LICENSE`, and `package.json` at its root. |
+| `npm pack --dry-run` | The tarball contains `dist/`, `docs/`, `fixtures/`, `README.md`, `LICENSE`, and `package.json` at its root. |
 | Install the packed artifact in a temporary project | Public exports import without source files. |
 | Run a metadata smoke test from the installed package | A configuration created from the packed artifact serves the expected metadata. |
 | Check optional peers | Importing the core does not require Fastify, Express, Hono, MySQL, or Redis unless that adapter is imported. |

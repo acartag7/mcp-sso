@@ -1,0 +1,70 @@
+{
+  "id": "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed",
+  "kind": "fixture",
+  "profile": "host",
+  "contract": {
+    "section": "08",
+    "clause": "8.4",
+    "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
+  },
+  "status": "draft",
+  "notes": "Host profile because the exact challenge pins the reference implementation's origin-root protected-resource metadata location; Atesaki D1 uses its route-scoped location. Draft until the reference runner passes it. The response body is pinned by section 09 and is asserted by that section's fixture, not here. The audit event name and reason are pinned by section 13 and are added when that section's fixtures land. Both bearer values are independently valid corpus-signed tokens for this issuer, resource, and clock. Selecting either reaches the protected handler and returns 204, so only rejection before first/last selection can satisfy the expected 401.",
+  "given": {
+    "config": {
+      "issuer": "https://api.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000001",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": ["https://client.example.com/callback"],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": ["mcp:read", "mcp:write"],
+      "defaultScopes": ["mcp:read"],
+      "allowedOrigins": ["https://api.example.com"],
+      "dcr": { "mode": "stateless" },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": { "seed": "fixture-08-8.4-0001" },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": { "checks": [] },
+    "rateLimit": { "checks": [] },
+    "protectedResource": {
+      "requiredScope": null,
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": { "absent": true }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "POST",
+      "path": "/mcp",
+      "headers": {
+        "authorization": ["Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6ImZpeHR1cmUtc2lnbmluZy1rZXktMSIsInR5cCI6IkpXVCJ9.eyJjbGllbnRfaWQiOiJmaXh0dXJlLWNsaWVudC0wOC04LTQtZmlyc3QiLCJzY29wZSI6Im1jcDpyZWFkIiwiaXNzIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20iLCJzdWIiOiJmaXh0dXJlLXN1YmplY3QtMDgtOC00LWZpcnN0IiwiYXVkIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vbWNwIiwiaWF0IjoxNzg3NzQ1NjAwLCJleHAiOjE3ODc3NDU5MDB9._UBAAyD7vh4CZeDS2W0ighb0mvVU9mey4QRWomg_j3h-Fwx3JjLd_AEiN_aKVU7KTgZWWZ4baVpOhzbiYMozig", "Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6ImZpeHR1cmUtc2lnbmluZy1rZXktMSIsInR5cCI6IkpXVCJ9.eyJjbGllbnRfaWQiOiJmaXh0dXJlLWNsaWVudC0wOC04LTQtc2Vjb25kIiwic2NvcGUiOiJtY3A6cmVhZCIsImlzcyI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tIiwic3ViIjoiZml4dHVyZS1zdWJqZWN0LTA4LTgtNC1zZWNvbmQiLCJhdWQiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9tY3AiLCJpYXQiOjE3ODc3NDU2MDAsImV4cCI6MTc4Nzc0NTkwMH0.8cDsrzbOQogV9U05kyPkhRo5lHzTqmAsJvxCKOWhCYYgCPWxYNTyMSkN20nF_M5LLJG3GkbNgjWpiQlx5ZQMyA"],
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18"
+      },
+      "body": { "json": { "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} } }
+    }
+  },
+  "then": {
+    "status": 401,
+    "headers": {
+      "www-authenticate": {
+        "matches": "^Bearer resource_metadata=\"https://api\\.example\\.com/\\.well-known/oauth-protected-resource\", scope=\"mcp:read mcp:write\", error=\"invalid_token\"(, error_description=\"[^\"]*\")?$"
+      }
+    },
+    "outbound": []
+  }
+}

@@ -83,7 +83,8 @@
     "dist",
     "README.md",
     "LICENSE",
-    "docs"
+    "docs",
+    "fixtures"
   ],
   "scripts": {
     "test": "node --test --test-reporter=spec",
