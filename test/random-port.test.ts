@@ -4,6 +4,7 @@ import { test } from "node:test";
 import { decodeJwt, type JWK } from "jose";
 import { Bridge } from "../src/adapters/bridge.ts";
 import type { NormRequest } from "../src/adapters/http.ts";
+import { createUpstreamRedirectFlow } from "../src/adapters/upstream-flow.ts";
 import { createBridgeConfig } from "../src/config.ts";
 import {
   generateAuthorizationCode, generateConsentJti, generateRefreshFamilyId, generateRefreshToken, pkceChallenge,
@@ -48,7 +49,7 @@ test("generated values reject a RandomPort result with the wrong shape or length
   assert.throws(() => randomBytesFrom({ bytes: () => "four" as unknown as Uint8Array }, 4), /wrong byte count/);
 });
 
-test("Bridge consumes one injected stream across registration, consent, code, and refresh generation", async () => {
+test("one injected stream spans store, Bridge grants, and the upstream authorize leg", async () => {
   const random = new SeededRandom("bridge-seed");
   const store = new FixtureStore({}, random);
   try {
@@ -63,8 +64,9 @@ test("Bridge consumes one injected stream across registration, consent, code, an
       dcr: { mode: "stored", store }, accessTokenTtlSeconds: 600, refreshTokenTtlSeconds: 2_592_000,
       consentTokenTtlSeconds: 300, authorizationCodeTtlSeconds: 300,
     });
-    const bridge = new Bridge({ config, store, clock: { nowMs: () => Date.parse("2026-08-31T10:00:00.000Z") },
-      audit: noopAudit, rateLimit: { check: async () => true }, random });
+    const clock = { nowMs: () => Date.parse("2026-08-31T10:00:00.000Z") };
+    const rateLimit = { check: async () => true };
+    const bridge = new Bridge({ config, store, clock, audit: noopAudit, rateLimit, random });
     const registered = await bridge.handleRegister(request({}, { redirect_uris: ["https://client.example.com/callback"] }));
     const clientId = (registered.body as { client_id: string }).client_id;
     assert.equal(store.snapshot().store_instance[0]?.instance_id, "Ky-YDhJu9WPkFFtASWZ6QhLg");
@@ -84,6 +86,20 @@ test("Bridge consumes one injected stream across registration, consent, code, an
       redirect_uri: "https://client.example.com/callback", client_id: clientId, code_verifier: verifier }));
     assert.equal((tokens.body as { refresh_token: string }).refresh_token,
       "rt.3uBzXggOdEZuqbw4w_bncBjk.LMmwyKTkWuYVWdTztSKkCj4_3J_qU5o3RzhdEn5NzNk");
+    const upstream = createUpstreamRedirectFlow({ bridge, store, clock, audit: noopAudit, rateLimit, random,
+      identity: { redirectUri: "https://auth.example.com/oauth/callback",
+        buildAuthorizationUrl: ({ state, nonce, codeChallenge }) => `https://idp.example.com/authorize?${new URLSearchParams({ state, nonce, code_challenge: codeChallenge })}`,
+        async exchangeAndVerify() { return { ok: false, kind: "exchange_failed", reason: "not-called" }; } } });
+    const redirect = await upstream.handleAuthorize(request({ response_type: "code", client_id: clientId,
+      redirect_uri: "https://client.example.com/callback", code_challenge: pkceChallenge(verifier),
+      code_challenge_method: "S256", scope: "mcp:read", state: "client-state" }));
+    const location = new URL(String(redirect.headers.location));
+    assert.equal(location.searchParams.get("state"), "aVJuDkF0Up6A2HpS9lc9kMfljZGvqviyN1OFqeiFn7Q");
+    assert.equal(location.searchParams.get("nonce"), "cAt_FyObYeohst4tPSLauOB1VkTAjxkwCX-2EqZbyRs");
+    assert.equal(location.searchParams.get("code_challenge"), "X8N7TM3E3rH9qhdfM9BJRkFEZlHg21_nKTV29QPqzAQ");
+    const cookie = String(redirect.headers["set-cookie"]); const end = cookie.indexOf(";");
+    const flowToken = cookie.slice(cookie.indexOf("=") + 1, end);
+    assert.equal(decodeJwt(flowToken).jti, "upf_TaHzNJ_5U6NYrXUZhGA2Cp19UqQuexETCcxIAjaybHE");
   } finally { await store.close(); }
 });
 
