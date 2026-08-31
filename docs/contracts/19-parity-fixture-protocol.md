@@ -123,7 +123,7 @@ A new implementation builds and proves one slice at a time. Each slice: extract 
 
 ## 19.9 Threat-model notes
 
-- **The corpus is a target.** An attacker who can edit a frozen fixture can make a fail-closed rule look satisfied. Review `MANIFEST.json` hashes and the freeze log like code. CI fails on a hash mismatch. The freeze log is append-only.
+- **The corpus is a target.** An attacker who can edit a frozen fixture can make a fail-closed rule look satisfied. Review `MANIFEST.json` hashes and the freeze log like code. Before the first fixture freezes, the freeze machinery MUST make CI fail on a hash mismatch. The freeze log is append-only.
 - **Fixtures must never leak.** No real hostname, tenant, client id, secret, or key from any deployment appears in a fixture. Corpus material is generated for the corpus.
 - **Skips are failures.** A runner that skips a frozen fixture reports failure, as the store-conformance suite does. A skipped row is not evidence.
 

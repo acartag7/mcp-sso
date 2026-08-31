@@ -60,7 +60,16 @@ docs/contracts/14-error-catalog.md,\
 docs/contracts/15-package-and-export-map.md,\
 docs/contracts/16-spec-conformance-matrix.md,\
 docs/contracts/17-v0-2-feature-contracts.md,\
-docs/contracts/18-contract-change-protocol.md"
+docs/contracts/18-contract-change-protocol.md,\
+docs/contracts/19-parity-fixture-protocol.md,\
+fixtures/README.md,\
+fixtures/schema/fixture.schema.json,\
+fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json,\
+fixtures/keys/signing-private.pem,\
+fixtures/keys/signing-public.pem,\
+fixtures/MANIFEST.json,\
+fixtures/CATALOGUE.md,\
+fixtures/FREEZE-LOG.md"
 export PG_CONTRACT_PATHS="${PG_CONTRACT_PATHS:-$default_contract_paths}"
 
 exec node "$check_script"
