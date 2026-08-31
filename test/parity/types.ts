@@ -1,5 +1,6 @@
 export type AdapterKind = "fastify" | "express" | "hono";
-export type HeaderValue = string | CaptureReference | Array<string | CaptureReference>;
+type HeaderOccurrence = string | CaptureReference;
+export type HeaderValue = HeaderOccurrence | [HeaderOccurrence, HeaderOccurrence, ...HeaderOccurrence[]];
 export type HeaderMap = Record<string, HeaderValue>;
 export type BodyValue = { absent: true } | { value: unknown };
 export type Matcher = string | { absent: true } | { equals: unknown } | { matches: string }

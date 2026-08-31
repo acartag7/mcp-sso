@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { assertAudit, assertState } from "./parity/assertions.ts";
 import { captureResponse, materializeRequest } from "./parity/captures.ts";
@@ -8,7 +12,9 @@ import { bodyObservation, matcherMatches } from "./parity/matchers.ts";
 import { OutboundScript } from "./parity/ports.ts";
 import { runFixture } from "./parity/runner.ts";
 import { sendRealHttp } from "./parity/http-client.ts";
-import { clauseSource, compileJsonSchema, loadCorpus, validateChains, validateFixtureIdentity } from "./parity/schema.ts";
+import {
+  clauseSource, compileJsonSchema, loadCorpus, validateChains, validateFixtureIdentity,
+} from "./parity/schema.ts";
 import { SeededRandom } from "./parity/random.ts";
 import { FixtureStore } from "./parity/store.ts";
 import { adapterForChainMember, adaptersForChain } from "./parity/adapters.ts";
@@ -20,6 +26,65 @@ test("fixture loader validates both section 8.4 drafts and their contract quotes
   const profiles = new Map(fixtures.map((fixture) => [fixture.id, fixture.profile]));
   assert.equal(profiles.get("08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable"), "portable");
   assert.equal(profiles.get("08-resource-server-verifier/8.4-duplicate-authorization-fails-closed"), "host");
+});
+
+test("fixture loader rejects entries outside the flat executable layout", async () => {
+  const root = await mkdtemp(join(tmpdir(), "mcp-sso-parity-layout-"));
+  try {
+    const misplaced = join(root, "8.4-misplaced-fixture.json");
+    await writeFile(misplaced, "{}");
+    await assert.rejects(loadCorpus(root), /unexpected corpus root entry/);
+    await rm(misplaced);
+    const misspelled = join(root, "resource-server-verifier");
+    await mkdir(misspelled);
+    await assert.rejects(loadCorpus(root), /unexpected corpus root entry/);
+    await rm(misspelled, { recursive: true });
+    const wrongArtifact = join(root, "README.md");
+    await mkdir(wrongArtifact);
+    await assert.rejects(loadCorpus(root), /corpus root artifact must be a file/);
+    await rm(wrongArtifact, { recursive: true });
+    const sectionPath = join(root, "08-resource-server-verifier");
+    await writeFile(sectionPath, "not a directory");
+    await assert.rejects(loadCorpus(root), /numbered corpus section must be a directory/);
+    await rm(sectionPath);
+    await mkdir(sectionPath);
+    const nested = join(sectionPath, "nested");
+    await mkdir(nested);
+    await assert.rejects(loadCorpus(root), /unexpected corpus entry/);
+    await rm(nested, { recursive: true });
+    await writeFile(join(sectionPath, "8.4-fixture.json.bak"), "{}");
+    await assert.rejects(loadCorpus(root), /unexpected corpus entry/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fixture loader rejects header arrays without multiple occurrences", async () => {
+  const fixture = structuredClone(await hostFixture());
+  const root = await mkdtemp(join(tmpdir(), "mcp-sso-parity-empty-header-"));
+  const directory = join(root, "08-resource-server-verifier");
+  const path = join(directory, "8.4-duplicate-authorization-fails-closed.json");
+  await mkdir(directory);
+  try {
+    for (const invalid of [[], ["one"]]) {
+      fixture.when.request.headers!.authorization = invalid as unknown as string;
+      await writeFile(path, JSON.stringify(fixture));
+      await assert.rejects(loadCorpus(root), /inbound request header authorization must use a string/);
+      fixture.when.request.headers!.authorization = "Bearer fixture-token";
+      fixture.given.http = [{ request: { method: "GET", url: "https://client.example.com/metadata",
+        headers: {}, body: { absent: true } }, response: { status: 204,
+        headers: { "x-fixture": invalid as unknown as string }, body: { absent: true } } }];
+      await writeFile(path, JSON.stringify(fixture));
+      await assert.rejects(loadCorpus(root), /HTTP response 1 header x-fixture must use a string/);
+      fixture.given.http = [];
+      fixture.given.protectedResource.success!.headers = { "x-fixture": invalid as unknown as string };
+      await writeFile(path, JSON.stringify(fixture));
+      await assert.rejects(loadCorpus(root), /protected response header x-fixture must use a string/);
+      fixture.given.protectedResource.success!.headers = {};
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("fixture quote validation admits a root contract clause", () => {
@@ -69,6 +134,45 @@ test("request materialization and real HTTP reject header line injection", () =>
     headers: [] }), /method and path cannot contain CR or LF/);
   assert.throws(() => sendRealHttp({ base: "http://127.0.0.1:1", method: "GET",
     path: "//169.254.169.254/latest/meta-data", headers: [] }), /cannot leave the mounted host/);
+});
+
+test("real HTTP completes keep-alive responses from framing and preserves Connection", async () => {
+  const connections: string[] = [];
+  const server = createServer((request, response) => {
+    for (let index = 0; index < request.rawHeaders.length; index += 2) {
+      if (request.rawHeaders[index]?.toLowerCase() === "connection") connections.push(request.rawHeaders[index + 1]!);
+    }
+    if (request.url === "/content-length") { response.end("ok"); return; }
+    if (request.url === "/chunked") { response.write("one"); response.end("two"); return; }
+    if (request.url === "/continue") { response.end("continued"); return; }
+    response.writeHead(204); response.end();
+  });
+  server.keepAliveTimeout = 60_000;
+  server.listen(0, "127.0.0.1");
+  await new Promise<void>((resolve, reject) => {
+    server.once("listening", resolve); server.once("error", reject);
+  });
+  try {
+    const address = server.address();
+    if (!address || typeof address === "string") assert.fail("test server did not bind a TCP port");
+    const base = `http://127.0.0.1:${address.port}`;
+    const contentLength = await sendRealHttp({ base, method: "GET", path: "/content-length",
+      headers: [["connection", "keep-alive"]] });
+    assert.equal(contentLength.body.toString("utf8"), "ok");
+    const chunked = await sendRealHttp({ base, method: "GET", path: "/chunked",
+      headers: [["connection", "keep-alive"]] });
+    assert.equal(chunked.body.toString("utf8"), "onetwo");
+    const noContent = await sendRealHttp({ base, method: "GET", path: "/no-content",
+      headers: [["connection", "keep-alive"]] });
+    assert.equal(noContent.status, 204);
+    const continued = await sendRealHttp({ base, method: "POST", path: "/continue",
+      headers: [["connection", "keep-alive"], ["expect", "100-continue"], ["content-length", "1"]],
+      body: Buffer.from("x") });
+    assert.equal(continued.body.toString("utf8"), "continued");
+    assert.deepEqual(connections, ["keep-alive", "keep-alive", "keep-alive", "keep-alive"]);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
 });
 
 test("chain captures insert only as complete inbound values", () => {
@@ -121,6 +225,41 @@ test("chain validation rejects capture names reused by another step", async () =
   second.chain = { id: "capture-chain", step: 2, previous: first.id };
   second.then.captures = [{ name: "token", source: { bodyPointer: "/other" } }];
   assert.throws(() => validateChains([first, second]), /duplicate capture name token/);
+});
+
+test("superseded fixtures name a different loaded fixture", async () => {
+  const replacement = structuredClone(await hostFixture());
+  const superseded = structuredClone(replacement);
+  superseded.id = "08-resource-server-verifier/8.4-superseded-fixture";
+  superseded.status = "superseded";
+  const root = await mkdtemp(join(tmpdir(), "mcp-sso-parity-superseded-"));
+  const directory = join(root, "08-resource-server-verifier");
+  await mkdir(directory);
+  try {
+    await writeFile(join(directory, "8.4-duplicate-authorization-fails-closed.json"), JSON.stringify(replacement));
+    const supersededPath = join(directory, "8.4-superseded-fixture.json");
+    for (const invalid of ["", "08-resource-server-verifier/8.4-missing-fixture", superseded.id]) {
+      superseded.supersededBy = invalid;
+      await writeFile(supersededPath, JSON.stringify(superseded));
+      await assert.rejects(loadCorpus(root), /supersededBy must name/);
+    }
+    superseded.supersededBy = replacement.id;
+    await writeFile(supersededPath, JSON.stringify(superseded));
+    assert.equal((await loadCorpus(root)).length, 2);
+    const successor = structuredClone(superseded);
+    successor.id = "08-resource-server-verifier/8.4-superseded-successor";
+    const successorPath = join(directory, "8.4-superseded-successor.json");
+    superseded.supersededBy = successor.id;
+    successor.supersededBy = superseded.id;
+    await writeFile(supersededPath, JSON.stringify(superseded));
+    await writeFile(successorPath, JSON.stringify(successor));
+    await assert.rejects(loadCorpus(root), /supersededBy chain contains a cycle/);
+    successor.supersededBy = replacement.id;
+    await writeFile(successorPath, JSON.stringify(successor));
+    assert.equal((await loadCorpus(root)).length, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("mixed-profile chains run portable members through every adapter", async () => {
@@ -286,16 +425,29 @@ test("audit and logical state assertions are exact and honor absent selectors", 
   assert.throws(() => assertAudit([event], { events: [], absent: [] }, "fixture"), /exact audit events/);
   assert.throws(() => assertAudit([event], { events: [event], absent: [{ reason: event.reason }] }, "fixture"), /forbidden audit selector/);
   const state = { authorization_code: [], consent_jti: [], refresh_token: [], revoked_family: [],
-    client_registration: [], store_instance: [{ instance_id: "fixture-store" }] };
+    client_registration: [], store_instance: [{ instance_id: "fixture-store-instance-01" }] };
   assertState(state, { mode: "contains", rows: {}, absent: [{ kind: "authorization_code",
     where: { client_id: "missing" } }] }, "fixture");
   assert.throws(() => assertState(state, { mode: "exact", rows: {}, absent: [] }, "fixture"), /exact state/);
   assert.throws(() => assertState(state, { mode: "contains", rows: {}, absent: [{
-    kind: "store_instance", where: { instance_id: "fixture-store" } }] }, "fixture"), /forbidden state selector/);
+    kind: "store_instance", where: { instance_id: "fixture-store-instance-01" } }] }, "fixture"), /forbidden state selector/);
   for (const kind of ["authorization_code", "consent_jti", "refresh_token", "revoked_family",
     "client_registration", "store_instance"] as const) {
     assert.throws(() => assertState(state, { mode: "contains", rows: {}, absent: [{
       kind, where: { misspelled_field: "value" } }] }, "fixture"), /state selector has unknown/);
+  }
+  for (const selector of [
+    { kind: "authorization_code", where: { code_hash: 42 } },
+    { kind: "consent_jti", where: { expires_at: [] } },
+    { kind: "refresh_token", where: { scopes: "mcp:read" } },
+    { kind: "revoked_family", where: { grant_generation: "1" } },
+    { kind: "client_registration", where: { issued_at_epoch: "0" } },
+    { kind: "store_instance", where: { instance_id: false } },
+    { kind: "authorization_code", where: { code_challenge_method: "plain" } },
+    { kind: "client_registration", where: { application_type: "service" } },
+  ] as const) {
+    assert.throws(() => assertState(state, { mode: "contains", rows: {}, absent: [selector] }, "fixture"),
+      /state selector has invalid/);
   }
 });
 
@@ -367,7 +519,7 @@ test("given HTTP responses preserve distinct header occurrences", async () => {
 
 test("given HTTP responses reject header line injection", async () => {
   const url = "https://client.example.com/header-injection";
-  for (const value of ["safe\rmalicious: one", ["safe", "safe\nmalicious: two"]]) {
+  for (const value of ["safe\rmalicious: one", ["safe", "safe\nmalicious: two"] as [string, string]]) {
     const script = new OutboundScript([{ request: { method: "GET", url,
       headers: {}, body: { absent: true } }, response: { status: 200,
       headers: { "x-fixture": value }, body: { absent: true } } }]);
@@ -398,14 +550,31 @@ test("protected-resource JSON string responses are serialized as JSON", async ()
   await runFixture(fixture);
 });
 
-test("outbound observation preserves request header occurrences", async () => {
+test("outbound observation records normalized request headers", async () => {
   const url = "https://client.example.com/repeated-request";
   const script = new OutboundScript([{ request: { method: "GET", url,
-    headers: { "x-fixture": { equals: ["one", "two"] } }, body: { absent: true } },
+    headers: { "x-fixture": "one, two" }, body: { absent: true } },
   response: { status: 204, headers: {}, body: { absent: true } } }]);
-  await script.fetch(url, { headers: [["x-fixture", "one"], ["x-fixture", "two"]] });
+  await script.fetch(url, { headers: [["X-Fixture", "  one\t "], ["x-fixture", "\ttwo  "]] });
   script.assertComplete([{ method: "GET", url, headers: {
-    "x-fixture": { equals: ["one", "two"] },
+    "x-fixture": "one, two",
+  }, body: { absent: true } }], "fixture");
+});
+
+test("outbound tuple headers use one normalized snapshot", async () => {
+  const url = "https://client.example.com/header-snapshot";
+  const script = new OutboundScript([{ request: { method: "GET", url,
+    headers: { "x-fixture": "one" }, body: { absent: true } },
+  response: { status: 204, headers: {}, body: { absent: true } } }]);
+  let reads = 0;
+  const occurrence = ["x-fixture", ""] as [string, string];
+  Object.defineProperty(occurrence, 1, { get() { reads += 1; return "  one\t "; } });
+  const init: RequestInit = {};
+  Object.defineProperty(init, "headers", { value: [occurrence], enumerable: true });
+  await script.fetch(url, init);
+  assert.equal(reads, 1);
+  script.assertComplete([{ method: "GET", url, headers: {
+    "x-fixture": "one",
   }, body: { absent: true } }], "fixture");
 });
 

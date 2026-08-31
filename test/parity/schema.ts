@@ -15,6 +15,8 @@ const Ajv2020 = (require("ajv/dist/2020.js") as { default: typeof Ajv2020Class }
 const addFormats = (require("ajv-formats") as { default: FormatsPlugin }).default;
 const ajv = createAjv();
 let fixtureValidator: ValidateFunction | undefined;
+const ROOT_FILES = new Set(["README.md", "FREEZE-LOG.md", "MANIFEST.json", "CATALOGUE.md"]);
+const ROOT_DIRECTORIES = new Set(["keys", "schema"]);
 
 export function compileJsonSchema(schema: Record<string, unknown>): ValidateFunction {
   return createAjv().compile(schema);
@@ -35,6 +37,7 @@ export async function loadCorpus(root = FIXTURES_ROOT): Promise<ParityFixture[]>
     ids.add(fixture.id);
     fixtures.push(fixture);
   }
+  validateSupersededFixtures(fixtures);
   validateChains(fixtures);
   return fixtures;
 }
@@ -50,10 +53,24 @@ async function fixturePaths(root: string): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true });
   const paths: string[] = [];
   for (const entry of entries) {
-    if (!entry.isDirectory() || !/^(0[1-9]|1[0-9])-/.test(entry.name)) continue;
+    if (ROOT_FILES.has(entry.name)) {
+      if (!entry.isFile()) throw new FixtureRunnerError(`${entry.name}: corpus root artifact must be a file`);
+      continue;
+    }
+    if (ROOT_DIRECTORIES.has(entry.name)) {
+      if (!entry.isDirectory()) throw new FixtureRunnerError(`${entry.name}: corpus root artifact must be a directory`);
+      continue;
+    }
+    if (!/^(0[1-9]|1[0-9])-/.test(entry.name)) {
+      throw new FixtureRunnerError(`${entry.name}: unexpected corpus root entry`);
+    }
+    if (!entry.isDirectory()) throw new FixtureRunnerError(`${entry.name}: numbered corpus section must be a directory`);
     const directory = resolve(root, entry.name);
     for (const file of await readdir(directory, { withFileTypes: true })) {
-      if (file.isFile() && file.name.endsWith(".json")) paths.push(resolve(directory, file.name));
+      if (!file.isFile() || !file.name.endsWith(".json")) {
+        throw new FixtureRunnerError(`${entry.name}/${file.name}: unexpected corpus entry`);
+      }
+      paths.push(resolve(directory, file.name));
     }
   }
   return paths.sort();
@@ -68,10 +85,28 @@ async function loadFixture(path: string, root: string, validate: ValidateFunctio
     throw new FixtureRunnerError(`${path}: schema validation failed: ${detail}`);
   }
   const fixture = raw as ParityFixture;
+  validateHeaderMaps(fixture);
   const expectedId = relative(root, path).split(sep).join("/").replace(/\.json$/u, "");
   validateFixtureIdentity(fixture, expectedId, path);
   await validateQuote(fixture);
   return fixture;
+}
+
+function validateHeaderMaps(fixture: ParityFixture): void {
+  for (const [index, exchange] of fixture.given.http.entries()) {
+    validateHeaderMap(exchange.response.headers, `${fixture.id} HTTP response ${index + 1}`);
+  }
+  if (fixture.kind !== "fixture") return;
+  validateHeaderMap(fixture.when.request.headers, `${fixture.id} inbound request`);
+  validateHeaderMap(fixture.given.protectedResource.success?.headers, `${fixture.id} protected response`);
+}
+
+function validateHeaderMap(headers: Record<string, unknown> | undefined, label: string): void {
+  for (const [name, value] of Object.entries(headers ?? {})) {
+    if (Array.isArray(value) && value.length < 2) {
+      throw new FixtureRunnerError(`${label} header ${name} must use a string for one occurrence or an array for multiple occurrences`);
+    }
+  }
 }
 
 export function validateFixtureIdentity(fixture: ParityFixture, expectedId: string, label: string): void {
@@ -112,6 +147,32 @@ export function clauseSource(source: string, clause: string): string {
   const rest = source.slice(heading.index + heading[0].length);
   const next = new RegExp(`^#{1,${level}}\\s+`, "mu").exec(rest);
   return rest.slice(0, next?.index ?? rest.length);
+}
+
+function validateSupersededFixtures(fixtures: ParityFixture[]): void {
+  const byId = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+  for (const fixture of fixtures) {
+    if (fixture.status !== "superseded") continue;
+    const replacement = fixture.supersededBy ? byId.get(fixture.supersededBy) : undefined;
+    if (!replacement) {
+      throw new FixtureRunnerError(`${fixture.id}: supersededBy must name a loaded fixture`);
+    }
+    if (replacement === fixture) {
+      throw new FixtureRunnerError(`${fixture.id}: supersededBy must name a different fixture`);
+    }
+  }
+  for (const fixture of fixtures) {
+    if (fixture.status !== "superseded") continue;
+    const seen = new Set<string>();
+    let current = fixture;
+    while (current.status === "superseded") {
+      if (seen.has(current.id)) {
+        throw new FixtureRunnerError(`${fixture.id}: supersededBy chain contains a cycle`);
+      }
+      seen.add(current.id);
+      current = byId.get(current.supersededBy!)!;
+    }
+  }
 }
 
 export function validateChains(fixtures: ParityFixture[]): void {

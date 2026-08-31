@@ -76,7 +76,7 @@ export class OutboundScript {
 
   readonly fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const request = new Request(input, init);
-    const headers = observedRequestHeaders(input, init, request);
+    const headers = observedRequestHeaders(request);
     const body = request.method === "GET" || request.method === "HEAD"
       ? undefined : Buffer.from(await request.arrayBuffer());
     const response = this.#next({ method: request.method, url: request.url, headers, body });
@@ -108,26 +108,11 @@ export class OutboundScript {
   }
 }
 
-function observedRequestHeaders(
-  input: string | URL | Request, init: RequestInit | undefined, request: Request,
-): Record<string, string | string[]> {
-  if (Array.isArray(init?.headers)) {
-    const occurrences = new Map<string, string[]>();
-    for (const [rawName, value] of init.headers) {
-      const name = rawName.toLowerCase();
-      occurrences.set(name, [...(occurrences.get(name) ?? []), value]);
-    }
-    return Object.fromEntries([...occurrences].map(([name, values]) => [
-      name, values.length === 1 ? values[0]! : values,
-    ]));
-  }
+function observedRequestHeaders(request: Request): Record<string, string | string[]> {
   const headers: Record<string, string | string[]> = {};
   request.headers.forEach((value, name) => { headers[name] = value; });
-  const source = init?.headers ?? (input instanceof Request ? input.headers : undefined);
-  if (source instanceof Headers) {
-    const cookies = source.getSetCookie();
-    if (cookies.length > 1) headers["set-cookie"] = cookies;
-  }
+  const cookies = request.headers.getSetCookie();
+  if (cookies.length > 1) headers["set-cookie"] = cookies;
   return headers;
 }
 

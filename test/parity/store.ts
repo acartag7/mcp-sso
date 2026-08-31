@@ -3,6 +3,7 @@ import {
   STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError,
   UNBOUND_REFRESH_RESOURCE, assertGrantGeneration, assertRefreshResource, assertSha256Hex,
   assertStoreInstanceId, assertStoreSubject, assertUtcIsoTimestamp, grantGenerationForWrite,
+  grantGenerationFromStored,
   normalizeRefreshTokenWrite,
   type AuthCodeRecord, type ConsentApprovalCommitResult, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput, type StorePort,
@@ -17,7 +18,7 @@ import type {
 import { FixtureRunnerError } from "./error.ts";
 
 interface StoredRefresh extends RefreshTokenRecord { consumedAt?: string }
-interface Family { resource: string; grantGeneration?: number; revokedAt?: string }
+interface Family { resource: string; grantGeneration: number | null; revokedAt?: string }
 const GENERATED_CLIENT_ID = /^mcpdc_[0-9a-f]{32}$/u;
 
 export class FixtureStore implements StorePort, ClientStore {
@@ -76,7 +77,7 @@ export class FixtureStore implements StorePort, ClientStore {
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.#open(); input = normalizeRefreshTokenWrite(input); validateRefreshToken(input);
     if (this.#refresh.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
-    const generation = grantGenerationForWrite(input.grantGeneration) ?? undefined;
+    const generation = grantGenerationForWrite(input.grantGeneration);
     const family = this.#families.get(input.familyId);
     if (family && (family.resource !== input.resource || family.grantGeneration !== generation)) {
       throw new StoreInputError("family grantGeneration or resource mismatch");
@@ -164,7 +165,8 @@ export class FixtureStore implements StorePort, ClientStore {
       consent_jti: [...this.#jtis].map(([jti, expires_at]) => ({ jti, expires_at })).toSorted((a, b) => a.jti.localeCompare(b.jti)),
       refresh_token: [...this.#refresh.values()].map(refreshRow).toSorted((a, b) => a.token_hash.localeCompare(b.token_hash)),
       revoked_family: [...this.#families].flatMap(([family_id, row]) => row.revokedAt
-        ? [{ family_id, resource: row.resource, revoked_at: row.revokedAt, ...optional("grant_generation", row.grantGeneration) }] : []).toSorted((a, b) => a.family_id.localeCompare(b.family_id)),
+        ? [{ family_id, resource: row.resource, revoked_at: row.revokedAt,
+          ...optional("grant_generation", row.grantGeneration ?? undefined) }] : []).toSorted((a, b) => a.family_id.localeCompare(b.family_id)),
       client_registration: [...this.#clients.values()].flatMap((row) => row.applicationType === "machine" ? [] : [clientRow(row)]).toSorted((a, b) => a.client_id.localeCompare(b.client_id)),
       store_instance: [{ instance_id: this.#instanceId }],
     };
@@ -172,7 +174,7 @@ export class FixtureStore implements StorePort, ClientStore {
 
   #open(): void { if (this.#closed) throw new FixtureRunnerError("Store is closed"); }
   #hydrateRefresh(row: RefreshTokenRow): void {
-    const generation = row.grant_generation;
+    const generation = grantGenerationFromStored(row.grant_generation);
     const current = this.#families.get(row.family_id);
     if (current && (current.resource !== row.resource || current.grantGeneration !== generation)) throw new FixtureRunnerError("pre-state refresh family mismatch");
     this.#families.set(row.family_id, current ?? { resource: row.resource, grantGeneration: generation });
@@ -183,9 +185,10 @@ export class FixtureStore implements StorePort, ClientStore {
     });
   }
   #hydrateRevocation(row: RevokedFamilyRow): void {
+    const generation = grantGenerationFromStored(row.grant_generation);
     const current = this.#families.get(row.family_id);
-    if (current && (current.resource !== row.resource || current.grantGeneration !== row.grant_generation)) throw new FixtureRunnerError("pre-state revoked family mismatch");
-    this.#families.set(row.family_id, { resource: row.resource, grantGeneration: row.grant_generation, revokedAt: row.revoked_at });
+    if (current && (current.resource !== row.resource || current.grantGeneration !== generation)) throw new FixtureRunnerError("pre-state revoked family mismatch");
+    this.#families.set(row.family_id, { resource: row.resource, grantGeneration: generation, revokedAt: row.revoked_at });
   }
 }
 
@@ -196,7 +199,7 @@ function uniqueRows<T extends object, K extends keyof T>(rows: T[] | undefined, 
 }
 function clone<T>(value: T): T { return structuredClone(value); }
 function optional<K extends string>(key: K, value: number | undefined): Partial<Record<K, number>> { return value === undefined ? {} : { [key]: value } as Record<K, number>; }
-function authRecord(row: AuthorizationCodeRow): AuthCodeRecord { return { codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri, resource: row.resource, scopes: [...row.scopes], codeChallenge: row.code_challenge, codeChallengeMethod: "S256", expiresAt: row.expires_at, grantGeneration: row.grant_generation }; }
+function authRecord(row: AuthorizationCodeRow): AuthCodeRecord { return { codeHash: row.code_hash, clientId: row.client_id, subject: row.subject, redirectUri: row.redirect_uri, resource: row.resource, scopes: [...row.scopes], codeChallenge: row.code_challenge, codeChallengeMethod: "S256", expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation) }; }
 function authRow(row: AuthCodeRecord): AuthorizationCodeRow { return { code_hash: row.codeHash, client_id: row.clientId, subject: row.subject, redirect_uri: row.redirectUri, resource: row.resource, scopes: [...row.scopes], code_challenge: row.codeChallenge, code_challenge_method: "S256", expires_at: row.expiresAt, ...optional("grant_generation", row.grantGeneration ?? undefined) }; }
 function refreshRecord(row: StoredRefresh): RefreshTokenRecord { const { consumedAt: _ignored, ...record } = row; return clone(record); }
 function refreshRow(row: StoredRefresh): RefreshTokenRow { return { token_hash: row.tokenHash, family_id: row.familyId, ...row.previousTokenHash === null ? {} : { previous_token_hash: row.previousTokenHash }, client_id: row.clientId, subject: row.subject, resource: row.resource ?? "", scopes: [...row.scopes], expires_at: row.expiresAt, ...row.consumedAt ? { consumed_at: row.consumedAt } : {}, ...optional("grant_generation", row.grantGeneration ?? undefined) }; }

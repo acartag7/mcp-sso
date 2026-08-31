@@ -75,3 +75,51 @@ test("fixture store derives scopes independently of refresh row order", async ()
   }
   assert.deepEqual(results, [["mcp:write", "mcp:read"], ["mcp:write", "mcp:read"]]);
 });
+
+test("fixture store hydrates an omitted authorization-code generation as legacy null", async () => {
+  const codeHash = "a".repeat(64);
+  const resource = "https://api.example.com/mcp", expiresAt = "2026-08-31T13:00:00.000Z";
+  const store = new FixtureStore({ authorization_code: [{
+    code_hash: codeHash, client_id: "fixture-client", subject: "fixture-subject",
+    redirect_uri: "https://client.example.com/callback", resource, scopes: ["mcp:read"],
+    code_challenge: "fixture-challenge", code_challenge_method: "S256", expires_at: expiresAt,
+  }] }, new SeededRandom("legacy-code-generation"));
+  try {
+    const code = await store.consumeAuthCode(codeHash, "2026-08-31T12:00:00.000Z");
+    assert.equal(code?.grantGeneration, null);
+  } finally { await store.close(); }
+});
+
+test("fixture store preserves an omitted refresh generation through rotation", async () => {
+  const tokenHash = "b".repeat(64), nextHash = "c".repeat(64);
+  const resource = "https://api.example.com/mcp", expiresAt = "2026-08-31T13:00:00.000Z";
+  const store = new FixtureStore({ refresh_token: [{
+    token_hash: tokenHash, family_id: "fixture-family", client_id: "fixture-client",
+    subject: "fixture-subject", resource, scopes: ["mcp:read"], expires_at: expiresAt,
+  }] }, new SeededRandom("legacy-refresh-generation"));
+  try {
+    const rotated = await store.rotateRefreshToken(tokenHash, {
+      tokenHash: nextHash, familyId: "fixture-family", previousTokenHash: tokenHash,
+      clientId: "ignored-client", subject: "ignored-subject", resource,
+      scopes: ["ignored"], expiresAt,
+    }, "2026-08-31T12:00:00.000Z");
+    assert.equal(rotated?.grantGeneration, null);
+    assert.deepEqual(store.snapshot().refresh_token.map((row) => row.grant_generation), [undefined, undefined]);
+  } finally { await store.close(); }
+});
+
+test("fixture store agrees on omitted refresh and revocation generations", async () => {
+  const resource = "https://api.example.com/mcp", family_id = "fixture-family";
+  const store = new FixtureStore({ refresh_token: [{
+    token_hash: "d".repeat(64), family_id, client_id: "fixture-client",
+    subject: "fixture-subject", resource, scopes: ["mcp:read"],
+    expires_at: "2026-08-31T13:00:00.000Z",
+  }], revoked_family: [{
+    family_id, resource, revoked_at: "2026-08-31T12:00:00.000Z",
+  }] }, new SeededRandom("legacy-revocation-generation"));
+  try {
+    assert.deepEqual(store.snapshot().revoked_family, [{
+      family_id, resource, revoked_at: "2026-08-31T12:00:00.000Z",
+    }]);
+  } finally { await store.close(); }
+});
