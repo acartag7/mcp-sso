@@ -64,6 +64,7 @@ docs/contracts/18-contract-change-protocol.md,\
 docs/contracts/19-parity-fixture-protocol.md,\
 fixtures/README.md,\
 fixtures/schema/fixture.schema.json,\
+fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable.json,\
 fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json,\
 fixtures/keys/signing-private.pem,\
 fixtures/keys/signing-public.pem,\
