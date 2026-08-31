@@ -1,10 +1,16 @@
-import type { ClientRegistration, ClientStore } from "../../src/ports/client-store.ts";
+import type { ClientRegistration, ClientStore, UserClientRegistration } from "../../src/ports/client-store.ts";
 import {
-  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, grantGenerationForWrite,
+  STORED_DCR_GRANT_GENERATION, STORED_DCR_RESOURCE_BINDING, StoreInputError,
+  UNBOUND_REFRESH_RESOURCE, assertGrantGeneration, assertRefreshResource, assertSha256Hex,
+  assertStoreInstanceId, assertStoreSubject, assertUtcIsoTimestamp, grantGenerationForWrite,
+  normalizeRefreshTokenWrite,
   type AuthCodeRecord, type ConsentApprovalCommitResult, type RefreshTokenRecord,
   type SaveAuthCodeInput, type SaveRefreshTokenInput, type StorePort,
 } from "../../src/ports/store.ts";
 import { randomBytesFrom, type RandomPort } from "../../src/ports/random.ts";
+import type { ClockPort } from "../../src/ports/clock.ts";
+import { StoreExpiryLifecycle } from "../../src/store/expiry-lifecycle.ts";
+import { assertRegistrationRedirectPolicy } from "../../src/redirect.ts";
 import type {
   AuthorizationCodeRow, ClientRegistrationRow, LogicalState, RefreshTokenRow, RevokedFamilyRow,
 } from "./types.ts";
@@ -12,6 +18,7 @@ import { FixtureRunnerError } from "./error.ts";
 
 interface StoredRefresh extends RefreshTokenRecord { consumedAt?: string }
 interface Family { resource: string; grantGeneration?: number; revokedAt?: string }
+const GENERATED_CLIENT_ID = /^mcpdc_[0-9a-f]{32}$/u;
 
 export class FixtureStore implements StorePort, ClientStore {
   readonly storedDcrGrantGeneration = STORED_DCR_GRANT_GENERATION;
@@ -22,6 +29,7 @@ export class FixtureStore implements StorePort, ClientStore {
   readonly #jtis = new Map<string, string>();
   readonly #clients = new Map<string, ClientRegistration>();
   readonly #random: RandomPort;
+  readonly #expiry = new StoreExpiryLifecycle(this, true);
   #instanceId: string;
   #closed = false;
   #sweptThrough: string | undefined;
@@ -48,36 +56,44 @@ export class FixtureStore implements StorePort, ClientStore {
   }
   async commitConsentApproval(instance: string, jti: string, expires: string, code: SaveAuthCodeInput): Promise<ConsentApprovalCommitResult> {
     this.#open();
+    assertStoreInstanceId(instance); assertUtcIsoTimestamp(expires, "expiresAtIso"); validateAuthCode(code);
     if (instance !== this.#instanceId) return "binding_mismatch";
     if (this.#jtis.has(jti) || (this.#sweptThrough !== undefined && expires < this.#sweptThrough)) return "replayed";
     this.#jtis.set(jti, expires); await this.saveAuthCode(code); return "stored";
   }
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
-    this.#open(); this.#authCodes.set(input.codeHash, clone({ ...input, grantGeneration: grantGenerationForWrite(input.grantGeneration) }));
+    this.#open(); validateAuthCode(input);
+    this.#authCodes.set(input.codeHash, clone({ ...input, grantGeneration: grantGenerationForWrite(input.grantGeneration) }));
   }
   async consumeAuthCode(hash: string, now: string, generation?: number, resource?: string): Promise<AuthCodeRecord | null> {
-    this.#open(); const row = this.#authCodes.get(hash); if (!row) return null;
+    this.#open(); assertSha256Hex(hash, "codeHash"); assertUtcIsoTimestamp(now, "nowIso");
+    const row = this.#authCodes.get(hash); if (!row) return null;
     if (resource !== undefined && row.resource !== resource) return null;
+    assertStoreSubject(row.subject, "stored subject");
     this.#authCodes.delete(hash);
     return row.expiresAt > now && (generation === undefined || row.grantGeneration === generation) ? clone(row) : null;
   }
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
-    this.#open();
-    if (this.#refresh.has(input.tokenHash)) throw new FixtureRunnerError("refresh token hash collision");
+    this.#open(); input = normalizeRefreshTokenWrite(input); validateRefreshToken(input);
+    if (this.#refresh.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
     const generation = grantGenerationForWrite(input.grantGeneration) ?? undefined;
     const family = this.#families.get(input.familyId);
     if (family && (family.resource !== input.resource || family.grantGeneration !== generation)) {
-      throw new FixtureRunnerError("refresh family binding mismatch");
+      throw new StoreInputError("family grantGeneration or resource mismatch");
     }
     this.#families.set(input.familyId, family ?? { resource: input.resource, grantGeneration: generation });
     this.#refresh.set(input.tokenHash, clone({ ...input, grantGeneration: generation }));
   }
   async rotateRefreshToken(hash: string, next: SaveRefreshTokenInput, now: string, generation?: number, resource?: string): Promise<RefreshTokenRecord | null> {
-    this.#open(); const current = this.#refresh.get(hash); if (!current) return null;
+    this.#open(); next = normalizeRefreshTokenWrite(next); validateRotation(hash, next, now);
+    const current = this.#refresh.get(hash); if (!current) return null;
     const family = this.#families.get(current.familyId); if (!family) return null;
+    assertStoreSubject(current.subject, "stored subject");
     if (family.revokedAt) return null;
     if (generation !== undefined && (family.grantGeneration !== generation || current.grantGeneration !== generation)) return null;
-    if (resource !== undefined && (family.resource !== resource || current.resource !== resource)) return null;
+    if (current.resource === null || current.resource === UNBOUND_REFRESH_RESOURCE
+      || family.resource !== current.resource
+      || (resource !== undefined && current.resource !== resource)) return null;
     if (current.consumedAt) { await this.revokeRefreshTokenFamily(current.familyId, now); return null; }
     if (current.expiresAt <= now || next.familyId !== current.familyId) return null;
     if (this.#refresh.has(next.tokenHash)) return null;
@@ -87,20 +103,24 @@ export class FixtureStore implements StorePort, ClientStore {
     return refreshRecord(current);
   }
   async revokeRefreshTokenFamily(id: string, at: string, resource?: string): Promise<void> {
-    this.#open(); const family = this.#families.get(id);
+    this.#open(); assertUtcIsoTimestamp(at, "revokedAtIso");
+    if (resource !== undefined) assertRefreshResource(resource, "expectedResource");
+    const family = this.#families.get(id);
     if (family && family.revokedAt === undefined && (resource === undefined || family.resource === resource)) family.revokedAt = at;
   }
   async findRefreshToken(hash: string): Promise<RefreshTokenRecord | null> {
-    this.#open(); const row = this.#refresh.get(hash); return row ? refreshRecord(row) : null;
+    this.#open(); const row = this.#refresh.get(hash);
+    if (row) assertStoreSubject(row.subject, "stored subject");
+    return row ? refreshRecord(row) : null;
   }
   async consumeConsentJti(jti: string, expires: string): Promise<boolean> {
-    this.#open();
+    this.#open(); assertUtcIsoTimestamp(expires, "expiresAtIso");
     if (this.#jtis.has(jti) || (this.#sweptThrough !== undefined && expires < this.#sweptThrough)) return false;
     this.#jtis.set(jti, expires); return true;
   }
   async findGrantedScopes(subject: string, client: string, now: string, generation?: number, resource?: string): Promise<string[]> {
-    this.#open(); const scopes: string[] = [];
-    for (const row of this.#refresh.values()) {
+    this.#open(); assertStoreSubject(subject); assertUtcIsoTimestamp(now, "nowIso"); const scopes: string[] = [];
+    for (const row of [...this.#refresh.values()].toSorted((a, b) => a.tokenHash.localeCompare(b.tokenHash))) {
       const family = this.#families.get(row.familyId);
       if (row.subject !== subject || row.clientId !== client || row.consumedAt || row.expiresAt <= now || family?.revokedAt) continue;
       if (generation !== undefined && row.grantGeneration !== generation) continue;
@@ -110,17 +130,32 @@ export class FixtureStore implements StorePort, ClientStore {
     return scopes;
   }
   async sweepExpired(now: string): Promise<void> {
-    this.#open(); if (this.#sweptThrough === undefined || this.#sweptThrough < now) this.#sweptThrough = now;
+    this.#open(); assertUtcIsoTimestamp(now, "nowIso");
+    if (this.#sweptThrough === undefined || this.#sweptThrough < now) this.#sweptThrough = now;
     for (const [hash, row] of this.#authCodes) if (row.expiresAt < now) this.#authCodes.delete(hash);
     for (const [jti, expires] of this.#jtis) if (expires < now) this.#jtis.delete(jti);
+    const tokens = [...this.#refresh.values()];
+    for (const [hash, row] of this.#refresh) {
+      if (!tokens.some((member) => member.familyId === row.familyId && member.expiresAt >= now)) {
+        this.#refresh.delete(hash);
+      }
+    }
+    const liveFamilies = new Set([...this.#refresh.values()].map((row) => row.familyId));
+    for (const family of this.#families.keys()) if (!liveFamilies.has(family)) this.#families.delete(family);
   }
-  async close(): Promise<void> { this.#closed = true; }
+  startExpiryCollection(clock: ClockPort): void { this.#open(); this.#expiry.start(clock); }
+  async close(): Promise<void> {
+    if (this.#closed) return;
+    await this.#expiry.stop(); this.#closed = true;
+  }
   async save(client: ClientRegistration): Promise<void> {
-    this.#open(); if (this.#clients.has(client.clientId)) throw new FixtureRunnerError("client id collision");
-    this.#clients.set(client.clientId, clone(client));
+    this.#open(); const snapshot = snapshotUserClient(client);
+    if (this.#clients.has(snapshot.clientId)) throw new StoreInputError("client id already exists");
+    this.#clients.set(snapshot.clientId, snapshot);
   }
   async find(clientId: string): Promise<ClientRegistration | null> {
-    this.#open(); const client = this.#clients.get(clientId); return client ? clone(client) : null;
+    this.#open(); if (!GENERATED_CLIENT_ID.test(clientId)) return null;
+    const client = this.#clients.get(clientId); return client ? snapshotUserClient(client) : null;
   }
 
   snapshot(): Required<LogicalState> {
@@ -135,7 +170,7 @@ export class FixtureStore implements StorePort, ClientStore {
     };
   }
 
-  #open(): void { if (this.#closed) throw new FixtureRunnerError("fixture store is closed"); }
+  #open(): void { if (this.#closed) throw new FixtureRunnerError("Store is closed"); }
   #hydrateRefresh(row: RefreshTokenRow): void {
     const generation = row.grant_generation;
     const current = this.#families.get(row.family_id);
@@ -167,3 +202,39 @@ function refreshRecord(row: StoredRefresh): RefreshTokenRecord { const { consume
 function refreshRow(row: StoredRefresh): RefreshTokenRow { return { token_hash: row.tokenHash, family_id: row.familyId, ...row.previousTokenHash === null ? {} : { previous_token_hash: row.previousTokenHash }, client_id: row.clientId, subject: row.subject, resource: row.resource ?? "", scopes: [...row.scopes], expires_at: row.expiresAt, ...row.consumedAt ? { consumed_at: row.consumedAt } : {}, ...optional("grant_generation", row.grantGeneration ?? undefined) }; }
 function clientRecord(row: ClientRegistrationRow): ClientRegistration { return { clientId: row.client_id, redirectUris: [...row.redirect_uris], applicationType: row.application_type, issuedAtEpoch: row.issued_at_epoch }; }
 function clientRow(row: Exclude<ClientRegistration, { applicationType: "machine" }>): ClientRegistrationRow { return { client_id: row.clientId, redirect_uris: [...row.redirectUris], application_type: row.applicationType, issued_at_epoch: row.issuedAtEpoch }; }
+function validateAuthCode(input: SaveAuthCodeInput): void {
+  assertStoreSubject(input.subject); assertSha256Hex(input.codeHash, "codeHash");
+  assertUtcIsoTimestamp(input.expiresAt, "expiresAt"); assertGrantGeneration(input.grantGeneration, "grantGeneration");
+  if (input.codeChallengeMethod !== "S256") throw new StoreInputError("codeChallengeMethod must be S256");
+}
+function validateRefreshToken(input: SaveRefreshTokenInput, validateSubject = true): void {
+  if (validateSubject) assertStoreSubject(input.subject);
+  assertSha256Hex(input.tokenHash, "tokenHash");
+  if (input.previousTokenHash !== null) assertSha256Hex(input.previousTokenHash, "previousTokenHash");
+  assertRefreshResource(input.resource, "resource"); assertUtcIsoTimestamp(input.expiresAt, "expiresAt");
+  assertGrantGeneration(input.grantGeneration, "grantGeneration");
+}
+function validateRotation(hash: string, next: SaveRefreshTokenInput, now: string): void {
+  assertSha256Hex(hash, "tokenHash"); validateRefreshToken(next, false); assertUtcIsoTimestamp(now, "nowIso");
+  if (next.previousTokenHash !== hash) throw new StoreInputError("next.previousTokenHash must match tokenHash");
+}
+function snapshotUserClient(value: unknown): UserClientRegistration {
+  try {
+    if (value === null || typeof value !== "object") throw invalidClient();
+    const record = value as Record<string, unknown>;
+    const { clientId, applicationType, issuedAtEpoch } = record;
+    if (typeof clientId !== "string" || !GENERATED_CLIENT_ID.test(clientId)) throw invalidClient();
+    if (applicationType !== "native" && applicationType !== "web") throw invalidClient();
+    if (!Number.isSafeInteger(issuedAtEpoch) || (issuedAtEpoch as number) < 0) throw invalidClient();
+    const source = record.redirectUris;
+    if (!Array.isArray(source) || source.length < 1 || source.length > 16) throw invalidClient();
+    const redirectUris = Array.from({ length: source.length }, (_, index) => source[index]);
+    for (const redirectUri of redirectUris) assertRegistrationRedirectPolicy(redirectUri, applicationType);
+    return { clientId, redirectUris: redirectUris as string[], applicationType,
+      issuedAtEpoch: issuedAtEpoch as number };
+  } catch (error) {
+    if (error instanceof StoreInputError) throw error;
+    throw invalidClient();
+  }
+}
+function invalidClient(): StoreInputError { return new StoreInputError("client registration is invalid"); }

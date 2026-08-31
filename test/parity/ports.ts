@@ -150,6 +150,9 @@ function explicitHeaders(headers: Record<string, unknown>): Record<string, strin
     if (!values.every((value) => typeof value === "string")) {
       throw new FixtureRunnerError(`outbound response header ${name} contains a capture or non-string value`);
     }
+    if (values.some((value) => /[\r\n]/u.test(value as string))) {
+      throw new FixtureRunnerError(`outbound response header ${name} cannot contain CR or LF`);
+    }
     result[name] = values as string[];
   }
   return result;

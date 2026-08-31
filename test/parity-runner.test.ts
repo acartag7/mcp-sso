@@ -349,6 +349,16 @@ test("given HTTP responses preserve distinct header occurrences", async () => {
   assert.throws(() => response.headers.get("x-fixture"), /multiple occurrences/);
 });
 
+test("given HTTP responses reject header line injection", async () => {
+  const url = "https://client.example.com/header-injection";
+  for (const value of ["safe\rmalicious: one", ["safe", "safe\nmalicious: two"]]) {
+    const script = new OutboundScript([{ request: { method: "GET", url,
+      headers: {}, body: { absent: true } }, response: { status: 200,
+      headers: { "x-fixture": value }, body: { absent: true } } }]);
+    await assert.rejects(script.fetch(url), /outbound response header x-fixture cannot contain CR or LF/);
+  }
+});
+
 test("scripted JSON string responses are serialized as JSON", async () => {
   const url = "https://client.example.com/json-string";
   const script = new OutboundScript([{ request: { method: "GET", url,
