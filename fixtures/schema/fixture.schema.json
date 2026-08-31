@@ -53,8 +53,8 @@
         },
         "statement": {
           "type": "string",
-          "description": "Append-only normative-statement anchor; required before a fixture freezes",
-          "pattern": "^[0-9]+(\\.[0-9]+){0,2}\\.[a-z]$"
+          "description": "Append-only normative-statement anchor with a bijective base-26 lowercase suffix; required before a fixture freezes",
+          "pattern": "^[0-9]+(\\.[0-9]+){0,2}\\.[a-z]+$"
         },
         "quote": {
           "type": "string",
