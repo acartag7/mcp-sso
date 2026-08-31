@@ -88,13 +88,13 @@ async function validateQuote(fixture: ParityFixture): Promise<void> {
   }
 }
 
-function clauseSource(source: string, clause: string): string {
+export function clauseSource(source: string, clause: string): string {
   const escaped = clause.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const heading = new RegExp(`^(#{2,6})\\s+${escaped}(?:\\s|$)`, "mu").exec(source);
+  const heading = new RegExp(`^(#{1,6})\\s+${escaped}\\.?(?:\\s|$)`, "mu").exec(source);
   if (heading === null || !heading[1]) throw new FixtureRunnerError(`contract clause ${clause} was not found`);
   const level = heading[1].length;
   const rest = source.slice(heading.index + heading[0].length);
-  const next = new RegExp(`^#{2,${level}}\\s+`, "mu").exec(rest);
+  const next = new RegExp(`^#{1,${level}}\\s+`, "mu").exec(rest);
   return rest.slice(0, next?.index ?? rest.length);
 }
 

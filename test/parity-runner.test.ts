@@ -7,7 +7,7 @@ import { FixtureRunnerError } from "./parity/error.ts";
 import { bodyObservation, matcherMatches } from "./parity/matchers.ts";
 import { OutboundScript } from "./parity/ports.ts";
 import { runFixture } from "./parity/runner.ts";
-import { compileJsonSchema, loadCorpus } from "./parity/schema.ts";
+import { clauseSource, compileJsonSchema, loadCorpus } from "./parity/schema.ts";
 import type { BootFixture, HttpFixture } from "./parity/types.ts";
 
 test("fixture loader validates both section 8.4 drafts and their contract quotes", async () => {
@@ -15,6 +15,11 @@ test("fixture loader validates both section 8.4 drafts and their contract quotes
   const profiles = new Map(fixtures.map((fixture) => [fixture.id, fixture.profile]));
   assert.equal(profiles.get("08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable"), "portable");
   assert.equal(profiles.get("08-resource-server-verifier/8.4-duplicate-authorization-fails-closed"), "host");
+});
+
+test("fixture quote validation admits a root contract clause", () => {
+  const source = "# 11. Scope contract\n\nRoot-clause sentence.\n\n# 12. Next contract\n\nOther sentence.\n";
+  assert.equal(clauseSource(source, "11").trim(), "Scope contract\n\nRoot-clause sentence.");
 });
 
 test("request materialization preserves real header occurrences and adds no Content-Type", () => {
