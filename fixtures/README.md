@@ -34,4 +34,4 @@ FREEZE-LOG.md                every change to a frozen fixture, with the contract
 
 ## Status
 
-Bootstrap. One `draft` host fixture, no runner, no official-suite receipt yet. See §19.11.
+Bootstrap. Two `draft` fixtures exist. No `MANIFEST.json`, frozen fixture, parity evidence, or official-suite receipt exists yet. See §19.11.
