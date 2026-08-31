@@ -11,6 +11,12 @@ export interface FixtureKeys { signingPrivate?: string; signingPublic?: string }
 export async function materializeConfig(
   literal: unknown, keys: FixtureKeys, store: FixtureStore,
 ): Promise<BridgeConfig> {
+  return createBridgeConfig(await materializeConfigInput(literal, keys, store) as BridgeConfig);
+}
+
+export async function materializeConfigInput(
+  literal: unknown, keys: FixtureKeys, store: FixtureStore,
+): Promise<unknown> {
   const input = structuredClone(literal);
   if (keys.signingPrivate !== undefined) {
     if (!isRecord(input)) throw new FixtureRunnerError("a signingPrivate key requires an object config");
@@ -19,8 +25,10 @@ export async function materializeConfig(
     }
     input.signingPrivateJwk = await privateJwk(keys.signingPrivate);
   }
-  if (isRecord(input) && isRecord(input.dcr) && input.dcr.mode === "stored") input.dcr = { mode: "stored", store };
-  return createBridgeConfig(input as unknown as BridgeConfig);
+  if (isRecord(input) && isRecord(input.dcr) && input.dcr.mode === "stored") {
+    input.dcr = { ...input.dcr, store };
+  }
+  return input;
 }
 
 export async function publicKey(path: string): Promise<Awaited<ReturnType<typeof importSPKI>>> {

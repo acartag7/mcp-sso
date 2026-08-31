@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { assertAudit, assertState } from "./parity/assertions.ts";
 import { captureResponse, materializeRequest } from "./parity/captures.ts";
-import { publicKey } from "./parity/config.ts";
+import { materializeConfigInput, publicKey } from "./parity/config.ts";
 import { FixtureRunnerError } from "./parity/error.ts";
 import { bodyObservation, matcherMatches } from "./parity/matchers.ts";
 import { OutboundScript } from "./parity/ports.ts";
 import { runFixture } from "./parity/runner.ts";
+import { sendRealHttp } from "./parity/http-client.ts";
 import { clauseSource, compileJsonSchema, loadCorpus, validateChains } from "./parity/schema.ts";
+import { SeededRandom } from "./parity/random.ts";
+import { FixtureStore } from "./parity/store.ts";
 import type { BootFixture, HttpFixture } from "./parity/types.ts";
 
 test("fixture loader validates both section 8.4 drafts and their contract quotes", async () => {
@@ -30,6 +33,20 @@ test("request materialization preserves real header occurrences and adds no Cont
     ["authorization", "Bearer first"], ["authorization", "Bearer second"], ["x-fixture", "one"],
   ]);
   assert.equal(request.body, undefined);
+});
+
+test("request materialization and real HTTP reject header line injection", () => {
+  for (const value of ["safe\rmalicious: one", "safe\nmalicious: two"]) {
+    assert.throws(() => materializeRequest({ method: "GET", path: "/", headers: {
+      "x-fixture": value,
+    } }, new Map()), /cannot contain CR or LF/);
+    assert.throws(() => sendRealHttp({ base: "http://127.0.0.1:1", method: "GET", path: "/",
+      headers: [["x-fixture", value]] }), /cannot contain CR or LF/);
+  }
+  const captures = new Map([["previous-fixture", new Map([["value", "safe\rmalicious: captured"]])]]);
+  assert.throws(() => materializeRequest({ method: "GET", path: "/", headers: {
+    "x-fixture": { $capture: { fixture: "previous-fixture", name: "value", format: "raw" } },
+  } }, captures), /cannot contain CR or LF/);
 });
 
 test("chain captures insert only as complete inbound values", () => {
@@ -165,6 +182,45 @@ test("boot execution enforces accepted and exact rejected outcomes", async () =>
   if (wrongCode.then.boot.outcome !== "rejected") assert.fail("rejected boot fixture changed shape");
   wrongCode.then.boot.error.code = "wrong_code";
   await assert.rejects(runFixture(wrongCode), (error: unknown) => hasCause(error, /boot error code/u));
+  const bridgeBoundary = structuredClone(accepted);
+  bridgeBoundary.given.entrypoint = "Bridge";
+  bridgeBoundary.given.config = { ...bridgeBoundary.given.config, unknown_fixture_key: true };
+  await runFixture(bridgeBoundary);
+});
+
+test("stored-DCR materialization retains literal nested fields while adding its port", async () => {
+  const fixture = await hostFixture();
+  const store = new FixtureStore({}, new SeededRandom("literal-dcr"));
+  try {
+    const input = await materializeConfigInput({ ...fixture.given.config,
+      dcr: { mode: "stored", fixture_marker: "retained" } }, fixture.given.keys, store);
+    assert.equal((input as { dcr: { fixture_marker: string } }).dcr.fixture_marker, "retained");
+    assert.equal((input as { dcr: { store: unknown } }).dcr.store, store);
+  } finally { await store.close(); }
+});
+
+test("fixture store revokes replayed families before predecessor expiry rejection", async () => {
+  const predecessor = "a".repeat(64), successor = "b".repeat(64), family = "fixture-family";
+  const store = new FixtureStore({ refresh_token: [
+    { token_hash: predecessor, family_id: family, client_id: "fixture-client", subject: "fixture-subject",
+      resource: "https://api.example.com/mcp", scopes: ["mcp:read"],
+      expires_at: "2026-08-31T11:00:00.000Z", consumed_at: "2026-08-31T10:00:00.000Z" },
+    { token_hash: successor, family_id: family, previous_token_hash: predecessor,
+      client_id: "fixture-client", subject: "fixture-subject", resource: "https://api.example.com/mcp",
+      scopes: ["mcp:read"], expires_at: "2026-08-31T13:00:00.000Z" },
+  ] }, new SeededRandom("replay-order"));
+  try {
+    const now = "2026-08-31T12:00:00.000Z";
+    const rotated = await store.rotateRefreshToken(predecessor, {
+      tokenHash: "c".repeat(64), familyId: family, previousTokenHash: predecessor,
+      clientId: "ignored-client", subject: "ignored-subject", resource: "https://api.example.com/mcp",
+      scopes: ["ignored"], expiresAt: "2026-08-31T14:00:00.000Z",
+    }, now);
+    assert.equal(rotated, null);
+    assert.deepEqual(store.snapshot().revoked_family, [{
+      family_id: family, resource: "https://api.example.com/mcp", revoked_at: now,
+    }]);
+  } finally { await store.close(); }
 });
 
 test("audit and logical state assertions are exact and honor absent selectors", () => {

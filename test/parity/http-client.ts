@@ -5,6 +5,11 @@ import { FixtureRunnerError } from "./error.ts";
 export function sendRealHttp(input: {
   base: string; method: string; path: string; headers: Array<[string, string]>; body?: Buffer;
 }): Promise<ObservedMessage> {
+  for (const [name, value] of input.headers) {
+    if (/[\r\n]/u.test(name) || /[\r\n]/u.test(value)) {
+      throw new FixtureRunnerError("HTTP request headers cannot contain CR or LF");
+    }
+  }
   return new Promise((resolve, reject) => {
     const target = new URL(input.path, input.base);
     const socket = new Socket(); const chunks: Buffer[] = [];

@@ -75,10 +75,11 @@ export class FixtureStore implements StorePort, ClientStore {
   async rotateRefreshToken(hash: string, next: SaveRefreshTokenInput, now: string, generation?: number, resource?: string): Promise<RefreshTokenRecord | null> {
     this.#open(); const current = this.#refresh.get(hash); if (!current) return null;
     const family = this.#families.get(current.familyId); if (!family) return null;
-    if (family.revokedAt || current.expiresAt <= now || next.familyId !== current.familyId) return null;
+    if (family.revokedAt) return null;
     if (generation !== undefined && (family.grantGeneration !== generation || current.grantGeneration !== generation)) return null;
     if (resource !== undefined && (family.resource !== resource || current.resource !== resource)) return null;
     if (current.consumedAt) { await this.revokeRefreshTokenFamily(current.familyId, now); return null; }
+    if (current.expiresAt <= now || next.familyId !== current.familyId) return null;
     if (this.#refresh.has(next.tokenHash)) return null;
     current.consumedAt = now;
     await this.saveRefreshToken({ ...next, clientId: current.clientId, subject: current.subject,

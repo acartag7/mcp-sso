@@ -50,7 +50,11 @@ function resolveHeaders(headers: HeaderMap, captures: CaptureValues): Array<[str
   const output: Array<[string, string]> = [];
   for (const [name, raw] of Object.entries(headers)) {
     for (const value of Array.isArray(raw) ? raw : [raw]) {
-      output.push([name, resolveString(value, captures, name === "authorization")]);
+      const resolved = resolveString(value, captures, name === "authorization");
+      if (/[\r\n]/u.test(resolved)) {
+        throw new FixtureRunnerError("HTTP request headers cannot contain CR or LF");
+      }
+      output.push([name, resolved]);
     }
   }
   return output;

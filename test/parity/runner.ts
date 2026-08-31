@@ -5,7 +5,8 @@ import type { AdapterKind, BootFixture, CaptureValues, HttpFixture, ObservedMess
 import { SeededRandom } from "./random.ts";
 import { FixtureStore } from "./store.ts";
 import { RecordingAudit, OutboundScript, ScriptedIdentity, ScriptedRateLimit } from "./ports.ts";
-import { materializeConfig } from "./config.ts";
+import { materializeConfig, materializeConfigInput } from "./config.ts";
+import type { BridgeConfig } from "../../src/config.ts";
 import { mountHost } from "./host.ts";
 import { materializeRequest, captureResponse } from "./captures.ts";
 import { sendRealHttp } from "./http-client.ts";
@@ -75,11 +76,15 @@ async function runBoot(fixture: BootFixture): Promise<void> {
   try {
     globalThis.fetch = outbound.fetch as typeof fetch;
     try {
-      const config = await materializeConfig(fixture.given.config, fixture.given.keys, store);
       if (fixture.given.entrypoint === "Bridge") {
+        const config = await materializeConfigInput(
+          fixture.given.config, fixture.given.keys, store,
+        ) as BridgeConfig;
         const clock = { nowMs: () => Date.parse(fixture.given.clock) };
         new Bridge({ config, store, clock, audit, rateLimit, random,
           cimdTransport: outbound.transport, cimdResolver: outbound.resolver });
+      } else {
+        await materializeConfig(fixture.given.config, fixture.given.keys, store);
       }
     } catch (caught) { error = caught; }
     assertBoot(error, fixture);
