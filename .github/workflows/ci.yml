@@ -64,6 +64,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm check:lines
       - run: pnpm check:seams
+      - run: pnpm check:contract-statements
       # B3: hard-fail if the integration env did not reach the test process.
       - name: assert integration env present
         run: |

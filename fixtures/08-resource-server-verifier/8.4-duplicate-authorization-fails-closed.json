@@ -5,6 +5,7 @@
   "contract": {
     "section": "08",
     "clause": "8.4",
+    "statement": "8.4.a",
     "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
   },
   "status": "draft",
