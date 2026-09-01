@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { CompactSign, generateKeyPair, type CryptoKey } from "jose";
 import { FixtureRunnerError } from "./parity/error.ts";
 import { assertJwt } from "./parity/jwt-capture.ts";
+import { parseStrictJson } from "./parity/strict-json.ts";
 import type { CaptureSpec } from "./parity/types.ts";
 
 type Expectation = NonNullable<CaptureSpec["jwt"]>;
@@ -181,6 +182,43 @@ test("strictly decodes and parses the verified payload", async () => {
       "captured JWT payload is invalid");
     assert.doesNotMatch(error.message, /attacker-marker/u);
   }
+});
+
+test("rejects JSON numbers that lose their distinct value", async () => {
+  const lossyHeader = { ...header, sequence: 9007199254740992 };
+  const headerToken = await rawJwt(
+    '{"alg":"ES256","kid":"capture-key","typ":"JWT","sequence":9007199254740993}',
+    JSON.stringify(claims),
+  );
+  await reject(headerToken, unsafeExpected(lossyHeader), undefined,
+    "captured JWT protected header is invalid");
+  const invalid: Array<[string, unknown]> = [
+    ['{"value":9007199254740993}', { value: 9007199254740992 }],
+    ['{"nested":{"value":1.0000000000000001}}', { nested: { value: 1 } }],
+    ['{"value":1e-400}', { value: 0 }],
+    ['{"value":1e400}', { value: Infinity }],
+  ];
+  for (const [source, rounded] of invalid) {
+    const token = await rawJwt(JSON.stringify(header), source);
+    await reject(token, unsafeExpected(header, rounded), undefined,
+      "captured JWT payload is invalid");
+  }
+});
+
+test("strict JSON parsing rejects lossy fixture numbers and preserves exact spellings", () => {
+  assert.throws(() => parseStrictJson('{"fixture":{"value":9007199254740993}}'),
+    /lossy JSON number/u);
+  const parsed = parseStrictJson(
+    '{"large":9007199254740992,"integer":1,"decimal":1.0,"exponent":1e0}');
+  assert.deepEqual(parsed, { large: 9007199254740992, integer: 1, decimal: 1, exponent: 1 });
+});
+
+test("accepts exact large numbers and equivalent decimal spellings", async () => {
+  const exactClaims = { large: 9007199254740992, integer: 1, decimal: 1, exponent: 1 };
+  const token = await rawJwt(JSON.stringify(header),
+    '{"large":9007199254740992,"integer":1,"decimal":1.0,"exponent":1e0}');
+  const { publicKey } = await es256;
+  await assert.doesNotReject(() => assertJwt(token, unsafeExpected(header, exactClaims), publicKey));
 });
 
 test("requires exact protected-header and claims structures", async () => {
