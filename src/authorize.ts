@@ -32,11 +32,12 @@ import {
 } from "./authorize-internals.ts";
 import { callPort } from "./port-failure.ts";
 import { readGrantedScopeSnapshot } from "./port-result.ts";
+import { systemRandom, type RandomPort } from "./ports/random.ts";
 export interface OAuthAuthorizationDeps {
   config: BridgeConfig;
   store: StorePort;
   clock: ClockPort;
-  audit: AuditPort;
+  audit: AuditPort; random?: RandomPort;
   /** The shared CIMD resolution service (§17.1.6 decision 1a/4) — the Bridge
    *  constructs one per instance so direct and upstream share ONE cache. */
   cimd?: CimdResolver;
@@ -82,7 +83,6 @@ export interface ApproveInput {
 }
 
 export interface ApproveResult { redirectTo: string; code?: string; state?: string; }
-
 const AUDIT_PREPARE = "oauth.authorize.prepare";
 const AUDIT_APPROVE = "oauth.authorize.approve";
 
@@ -90,14 +90,14 @@ export class OAuthAuthorizationUseCase {
   private readonly config: BridgeConfig;
   private readonly store: StorePort;
   private readonly clock: ClockPort;
-  private readonly audit: AuditPort;
+  private readonly audit: AuditPort; private readonly random: RandomPort;
   private readonly cimd?: CimdResolver;
 
   constructor(deps: OAuthAuthorizationDeps) {
     this.config = deps.config;
     this.store = deps.store;
     this.clock = deps.clock;
-    this.audit = deps.audit;
+    this.audit = deps.audit; this.random = deps.random ?? systemRandom;
     this.cimd = deps.cimd;
     assertStoreInstanceCapability(this.store);
     bindConsentStore(this.config, this.store);
@@ -162,7 +162,7 @@ export class OAuthAuthorizationUseCase {
           // CIMD registration — its own fetch/cache hit, or the carried one.
           ...(resolved.registration ? { cimdVerified: true as const } : {}),
         };
-        consentToken = await signConsentToken(claims, this.config, this.clock);
+        consentToken = await signConsentToken(claims, this.config, this.clock, this.random);
       } catch (error) {
         if (error instanceof OAuthError && !error.redirect) throw withRedirect(error, redirectUri, state);
         throw error;
@@ -221,7 +221,7 @@ export class OAuthAuthorizationUseCase {
       );
       auditClock = commitClock;
       assertConsentUnexpiredAt(consent.expiresAt, commitClock);
-      const code = generateAuthorizationCode();
+      const code = generateAuthorizationCode(this.random);
       const consentStoreInstanceId = consent.storeInstanceId; // hoisted: see above
       const commit = await callPort("StorePort", "commitConsentApproval", () => this.store.commitConsentApproval(consentStoreInstanceId, consent.jti, consent.expiresAt, {
         codeHash: sha256Hex(code),

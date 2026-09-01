@@ -22,6 +22,7 @@ import { noStoreHeaders, queryString, type NormRequest, type NormResponse } from
 import { redactForStderr } from "../audit/util.ts";
 import { writeAuditBestEffort } from "../audit/best-effort.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
+import type { RandomPort } from "../ports/random.ts";
 import { assertCallbackCimdPolicy } from "./upstream-flow-cimd.ts";
 import { isSchemeShaped } from "../cimd/registration.ts";
 import { resolveOpaqueRedirect } from "../authorize-internals.ts";
@@ -36,7 +37,6 @@ import {
   clearCookieValue, readFlowCookie, verifyFlowToken, timingSafeStringEqual, findRepeatedKeys,
   redirectErrorResponse, directErrorResponse, pickOAuthParams, type CompleteFlowClaims,
 } from "./upstream-flow-internals.ts";
-
 interface CommonUpstreamFlowDeps {
   bridge: Bridge;
   identity: RedirectIdentityPort;
@@ -46,8 +46,8 @@ interface CommonUpstreamFlowDeps {
   clock: ClockPort;
   /** REQUIRED — the Bridge's audit sink (pass noopAudit only deliberately). */
   audit: AuditPort;
-  /** Optional rate limiter (default noopRateLimit — mirrors BridgeDeps). */
-  rateLimit?: RateLimitPort;
+  /** Optional rate limiter and deterministic fixture entropy seam. */
+  rateLimit?: RateLimitPort; random?: RandomPort;
   /** Completion-specific default callback path. */
   callbackPath?: string;
   /** Flow-cookie TTL in seconds; default 600, max 3600. */
@@ -116,7 +116,7 @@ export function createUpstreamRedirectFlow(deps: UpstreamFlowDeps): UpstreamRedi
   };
   const handleAuthorize = createUpstreamAuthorizeHandler({
     bridge, identity, clock, rateLimit, callbackPath, flowTtlSeconds, complete, cookieProfile, guard,
-    cimdTransport: deps.cimdTransport, cimdResolver: deps.cimdResolver,
+    cimdTransport: deps.cimdTransport, cimdResolver: deps.cimdResolver, random: deps.random,
   });
 
   const handleCallback = async (req: NormRequest): Promise<NormResponse> => {
