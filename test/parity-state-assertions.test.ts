@@ -4,26 +4,20 @@ import { FixtureRunnerError } from "./parity/error.ts";
 import { assertState } from "./parity/state-assertions.ts";
 import type {
   AuthorizationCodeRow, ClientRegistrationRow, ConsentJtiRow, LogicalState, RefreshTokenRow,
-  StateAssertion,
+  RevokedFamilyRow, StateAssertion,
 } from "./parity/types.ts";
 
-const RESOURCE = "https://api.example.com/mcp";
-const CLIENT_ID = "mcp-client-7Qk2mZr9";
+const RESOURCE = "https://api.example.com/mcp", CLIENT_ID = "mcp-client-7Qk2mZr9";
 const REDIRECT_URI = "http://127.0.0.1:33418/callback";
 const SECOND_REDIRECT_URI = "http://127.0.0.1:33419/callback";
-const INSTANCE_ID = "7Qk2mZr9Tv1XbN4sLd6Hpe";
-const CODE_EXPIRES_AT = "2026-08-31T10:05:00.000Z";
-const LATER_EXPIRES_AT = "2026-08-31T11:05:00.000Z";
-const REFRESH_EXPIRES_AT = "2026-09-30T10:00:00.000Z";
-const CONSUMED_AT = "2026-08-31T10:02:00.000Z";
-const REVOKED_AT = "2026-08-31T09:30:00.000Z";
-const ISSUED_AT_EPOCH = 1756636800;
+const INSTANCE_ID = "7Qk2mZr9Tv1XbN4sLd6Hpe", SECOND_INSTANCE_ID = "3Wm8pTc5Yj2QhV7nRf1Kzx";
+const CODE_EXPIRES_AT = "2026-08-31T10:05:00.000Z", LATER_EXPIRES_AT = "2026-08-31T11:05:00.000Z";
+const REFRESH_EXPIRES_AT = "2026-09-30T10:00:00.000Z", CONSUMED_AT = "2026-08-31T10:02:00.000Z";
+const REVOKED_AT = "2026-08-31T09:30:00.000Z", ISSUED_AT_EPOCH = 1756636800;
 const REVERSED_SCOPES = ["mcp:write", "mcp:read"];
 const MODES = ["exact", "contains"] as const;
 
-function hex(seed: string): string {
-  return seed.repeat(Math.ceil(64 / seed.length)).slice(0, 64);
-}
+function hex(seed: string): string { return seed.repeat(Math.ceil(64 / seed.length)).slice(0, 64); }
 
 const CODE_A = hex("a1"), CODE_B = hex("b2");
 const REFRESH_A = hex("c3"), REFRESH_B = hex("d4");
@@ -50,27 +44,31 @@ function refreshRow(tokenHash: string, extra: RefreshFields): RefreshTokenRow {
 }
 
 function codeA(extra: CodeFields = {}): AuthorizationCodeRow { return codeRow(CODE_A, extra); }
-function codeB(extra: CodeFields = {}): AuthorizationCodeRow { return codeRow(CODE_B, { subject: "user-9033", ...extra }); }
-function refreshA(extra: RefreshFields = {}): RefreshTokenRow { return refreshRow(REFRESH_A, { consumed_at: CONSUMED_AT, ...extra }); }
-function refreshB(extra: RefreshFields = {}): RefreshTokenRow { return refreshRow(REFRESH_B, { previous_token_hash: REFRESH_A, ...extra }); }
-function jtiRow(jti: string, expiresAt: string = CODE_EXPIRES_AT): ConsentJtiRow { return { jti, expires_at: expiresAt }; }
+function codeB(extra: CodeFields = {}): AuthorizationCodeRow {
+  return codeRow(CODE_B, { subject: "user-9033", ...extra });
+}
+function refreshA(extra: RefreshFields = {}): RefreshTokenRow {
+  return refreshRow(REFRESH_A, { consumed_at: CONSUMED_AT, ...extra });
+}
+function refreshB(extra: RefreshFields = {}): RefreshTokenRow {
+  return refreshRow(REFRESH_B, { previous_token_hash: REFRESH_A, ...extra });
+}
+function jtiRow(jti: string, expiresAt: string = CODE_EXPIRES_AT): ConsentJtiRow {
+  return { jti, expires_at: expiresAt };
+}
+function revokedRow(): RevokedFamilyRow {
+  return { family_id: FAMILY_B, resource: RESOURCE, revoked_at: REVOKED_AT, grant_generation: 1 };
+}
 function clientRow(applicationType: "native" | "web" = "native"): ClientRegistrationRow {
-  return {
-    client_id: CLIENT_ID, redirect_uris: [REDIRECT_URI, SECOND_REDIRECT_URI],
-    application_type: applicationType, issued_at_epoch: ISSUED_AT_EPOCH,
-  };
+  return { client_id: CLIENT_ID, redirect_uris: [REDIRECT_URI, SECOND_REDIRECT_URI],
+    application_type: applicationType, issued_at_epoch: ISSUED_AT_EPOCH };
 }
 
 function snapshot(): Required<LogicalState> {
   return {
-    authorization_code: [codeA(), codeB()],
-    consent_jti: [jtiRow(JTI_A)],
-    refresh_token: [refreshA(), refreshB()],
-    revoked_family: [
-      { family_id: FAMILY_B, resource: RESOURCE, revoked_at: REVOKED_AT, grant_generation: 1 },
-    ],
-    client_registration: [clientRow()],
-    store_instance: [{ instance_id: INSTANCE_ID }],
+    authorization_code: [codeA(), codeB()], consent_jti: [jtiRow(JTI_A)],
+    refresh_token: [refreshA(), refreshB()], revoked_family: [revokedRow()],
+    client_registration: [clientRow()], store_instance: [{ instance_id: INSTANCE_ID }],
   };
 }
 
@@ -84,23 +82,28 @@ function withoutKind(kind: keyof LogicalState): LogicalState {
   return rows;
 }
 
-function assertion(rows: LogicalState, mode: StateAssertion["mode"] = "exact", absent: StateAssertion["absent"] = []): StateAssertion {
+function assertion(rows: LogicalState, mode: StateAssertion["mode"] = "exact",
+  absent: StateAssertion["absent"] = []): StateAssertion {
   return { mode, rows, absent };
 }
 
-test("exact accepts reordered rows and omits kinds whose observed rows are empty", () => {
-  assertState(snapshot(), assertion(snapshotWith({
+function runnerError(pattern: RegExp): (error: unknown) => boolean {
+  return (error) => error instanceof FixtureRunnerError && pattern.test(error.message);
+}
+
+test("exact accepts reordered rows and omits kinds whose observed rows are empty", async () => {
+  await assertState(snapshot(), assertion(snapshotWith({
     authorization_code: [codeB(), codeA()], refresh_token: [refreshB(), refreshA()],
   })), "fixture");
 
   const sparse = snapshotWith({ consent_jti: [], revoked_family: [], store_instance: [] });
-  assertState(sparse, assertion({
+  await assertState(sparse, assertion({
     authorization_code: [codeA(), codeB()], refresh_token: [refreshA(), refreshB()],
     client_registration: [clientRow()],
   }), "fixture");
 });
 
-test("exact rejects extra, missing, changed, unlisted, and reordered array members", () => {
+test("exact rejects extra, missing, changed, unlisted, and reordered array members", async () => {
   const cases: Array<[string, Required<LogicalState>, LogicalState]> = [
     ["an extra observed row", snapshotWith({ consent_jti: [jtiRow(JTI_A), jtiRow(JTI_B)] }), snapshot()],
     ["a missing observed row", snapshotWith({ refresh_token: [refreshA()] }), snapshot()],
@@ -111,21 +114,21 @@ test("exact rejects extra, missing, changed, unlisted, and reordered array membe
   ];
 
   for (const [name, observed, rows] of cases) {
-    assert.throws(
+    await assert.rejects(
       () => assertState(observed, assertion(rows), "fixture"), /fixture exact state/, name,
     );
   }
 });
 
-test("contains accepts a strict subset of rows and an empty row set", () => {
-  assertState(snapshot(), assertion({
+test("contains accepts a strict subset of rows and an empty row set", async () => {
+  await assertState(snapshot(), assertion({
     refresh_token: [refreshB()], store_instance: [{ instance_id: INSTANCE_ID }],
   }, "contains"), "fixture");
 
-  assertState(snapshot(), assertion({}, "contains"), "fixture");
+  await assertState(snapshot(), assertion({}, "contains"), "fixture");
 });
 
-test("contains rejects a missing key, a changed row, and a reordered scope list", () => {
+test("contains rejects a missing key, a changed row, and a reordered scope list", async () => {
   const cases: Array<[Required<LogicalState>, LogicalState, RegExp]> = [
     [snapshotWith({ refresh_token: [refreshA()] }), { refresh_token: [refreshB()] },
       /fixture contains refresh_token:/],
@@ -136,60 +139,56 @@ test("contains rejects a missing key, a changed row, and a reordered scope list"
   ];
 
   for (const [observed, rows, message] of cases) {
-    assert.throws(
+    await assert.rejects(
       () => assertState(observed, assertion(rows, "contains"), "fixture"), message,
     );
   }
 });
 
-test("a duplicate primary key in the expected rows is a runner error in both modes", () => {
+test("a duplicate primary key in the expected rows is a runner error in both modes", async () => {
   for (const mode of MODES) {
-    assert.throws(
+    await assert.rejects(
       () => assertState(snapshot(), assertion({
         authorization_code: [codeA(), codeA({ subject: "user-9033" })],
       }, mode), "fixture"),
-      (error: unknown) => error instanceof FixtureRunnerError
-        && /fixture expected state has duplicate authorization_code primary key/.test(error.message),
-      mode,
+      runnerError(/fixture expected state has duplicate authorization_code primary key/), mode,
     );
-    assert.throws(
+    await assert.rejects(
       () => assertState(snapshot(), assertion({
-        revoked_family: [...snapshot().revoked_family, ...snapshot().revoked_family],
+        revoked_family: [revokedRow(), revokedRow()],
       }, mode), "fixture"),
-      /fixture expected state has duplicate revoked_family primary key/, mode,
+      runnerError(/fixture expected state has duplicate revoked_family primary key/), mode,
     );
   }
 });
 
-test("a duplicate primary key in the observed snapshot is a runner error in both modes", () => {
+test("a duplicate primary key in the observed snapshot is a runner error in both modes", async () => {
   const duplicateJti = snapshotWith({ consent_jti: [jtiRow(JTI_A), jtiRow(JTI_A)] });
   const duplicateRefresh = snapshotWith({
     refresh_token: [refreshA(), refreshA({ subject: "user-9033" })],
   });
 
   for (const mode of MODES) {
-    assert.throws(
+    await assert.rejects(
       () => assertState(duplicateJti, assertion({}, mode), "fixture"),
-      (error: unknown) => error instanceof FixtureRunnerError
-        && /fixture observed state has duplicate consent_jti primary key/.test(error.message),
-      mode,
+      runnerError(/fixture observed state has duplicate consent_jti primary key/), mode,
     );
-    assert.throws(
+    await assert.rejects(
       () => assertState(duplicateRefresh, assertion({}, mode), "fixture"),
-      /fixture observed state has duplicate refresh_token primary key/, mode,
+      runnerError(/fixture observed state has duplicate refresh_token primary key/), mode,
     );
   }
 });
 
-test("absent selectors pass when no row matches and fail when one does, in both modes", () => {
+test("absent selectors pass when no row matches and fail when one does, in both modes", async () => {
   for (const mode of MODES) {
     const rows: LogicalState = mode === "exact" ? snapshot() : {};
-    assertState(snapshot(), assertion(rows, mode, [
+    await assertState(snapshot(), assertion(rows, mode, [
       { kind: "authorization_code", where: { code_hash: CODE_A, subject: "user-0000" } },
       { kind: "revoked_family", where: { family_id: FAMILY_A } },
     ]), "fixture");
 
-    assert.throws(
+    await assert.rejects(
       () => assertState(snapshot(), assertion(rows, mode, [
         { kind: "refresh_token", where: { family_id: FAMILY_A, consumed_at: CONSUMED_AT } },
       ]), "fixture"),
@@ -198,20 +197,20 @@ test("absent selectors pass when no row matches and fail when one does, in both 
   }
 });
 
-test("an absent selector matches neither an omitted optional field nor an inherited one", () => {
-  assertState(snapshot(), assertion(snapshot(), "exact", [
+test("an absent selector matches neither an omitted optional field nor an inherited one", async () => {
+  await assertState(snapshot(), assertion(snapshot(), "exact", [
     { kind: "refresh_token", where: { token_hash: REFRESH_B, consumed_at: CONSUMED_AT } },
   ]), "fixture");
 
   const inherited = Object.create({ consumed_at: CONSUMED_AT }) as RefreshTokenRow;
   Object.assign(inherited, refreshRow(REFRESH_A, {}));
-  assertState(snapshotWith({ refresh_token: [inherited] }), assertion(
+  await assertState(snapshotWith({ refresh_token: [inherited] }), assertion(
     snapshotWith({ refresh_token: [inherited] }), "exact",
     [{ kind: "refresh_token", where: { consumed_at: CONSUMED_AT } }],
   ), "fixture");
 });
 
-test("normalization leaves the caller's arrays and rows untouched", () => {
+test("normalization leaves the caller's arrays and rows untouched", async () => {
   const observed = snapshotWith({
     authorization_code: [codeB(), codeA()], consent_jti: [jtiRow(JTI_B), jtiRow(JTI_A)],
   });
@@ -221,27 +220,30 @@ test("normalization leaves the caller's arrays and rows untouched", () => {
   const observedBefore = structuredClone(observed);
   const expectedBefore = structuredClone(expectedRows);
 
-  assertState(observed, assertion(expectedRows, "contains"), "fixture");
+  await assertState(observed, assertion(expectedRows, "contains"), "fixture");
 
   assert.deepStrictEqual(observed, observedBefore);
   assert.deepStrictEqual(expectedRows, expectedBefore);
 });
 
-test("an unknown record kind or a second store_instance row is a runner error on either side", () => {
-  const twoInstances = [{ instance_id: INSTANCE_ID }, { instance_id: "7Qk2mZr9Tv1XbN4sLd6Hpf" }];
-  const unknownKind = { ...snapshot(), machine_client: [] } as unknown as Required<LogicalState>;
+test("a snapshot or expected row set outside the logical record shape is a runner error on either side", async () => {
+  const cases: Array<[string, Required<LogicalState>]> = [
+    ["an unknown record kind", { ...snapshot(), machine_client: [] } as unknown as Required<LogicalState>],
+    ["a second store_instance row",
+      snapshotWith({ store_instance: [{ instance_id: INSTANCE_ID }, { instance_id: SECOND_INSTANCE_ID }] })],
+    ["an unlisted row carrying an unknown field",
+      snapshotWith({ consent_jti: [{ ...jtiRow(JTI_A), extra: true } as ConsentJtiRow] })],
+    ["a row missing a required field", snapshotWith({ consent_jti: [{ jti: JTI_A } as ConsentJtiRow] })],
+    ["a wrongly typed field", snapshotWith({
+      revoked_family: [{ ...revokedRow(), grant_generation: "1" } as unknown as RevokedFamilyRow] })],
+  ];
+
   for (const mode of MODES) {
-    assert.throws(
-      () => assertState(snapshotWith({ store_instance: twoInstances }), assertion({}, mode), "fixture"),
-      (error: unknown) => error instanceof FixtureRunnerError
-        && /fixture observed state has 2 store_instance rows/.test(error.message),
-      mode,
-    );
-    assert.throws(() => assertState(snapshot(), assertion({ store_instance: twoInstances }, mode), "fixture"),
-      /fixture expected state has 2 store_instance rows/, mode);
-    assert.throws(() => assertState(unknownKind, assertion({}, mode), "fixture"),
-      /fixture observed state has unknown record kind machine_client/, mode);
-    assert.throws(() => assertState(snapshot(), assertion(unknownKind, mode), "fixture"),
-      /fixture expected state has unknown record kind machine_client/, mode);
+    for (const [name, malformed] of cases) {
+      await assert.rejects(() => assertState(malformed, assertion({}, mode), "fixture"),
+        runnerError(/fixture observed state is outside the logical record shape: state/), `${mode} ${name}`);
+      await assert.rejects(() => assertState(snapshot(), assertion(malformed, mode), "fixture"),
+        runnerError(/fixture expected state is outside the logical record shape: state/), `${mode} ${name}`);
+    }
   }
 });

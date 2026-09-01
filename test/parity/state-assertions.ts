@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import type { ValidateFunction } from "ajv/dist/2020.js";
 import { FixtureRunnerError } from "./error.ts";
 import { partialSelectorMatches } from "./matchers.ts";
+import { logicalStateValidator, schemaErrorsText } from "./schema-json.ts";
 import type { LogicalState, StateAssertion } from "./types.ts";
 
 const PRIMARY_KEYS = {
@@ -17,11 +19,14 @@ type NormalizedState = Record<Kind, object[]>;
 
 const KINDS = Object.keys(PRIMARY_KEYS) as Kind[];
 
-export function assertState(
+export async function assertState(
   observed: Required<LogicalState>,
   expected: StateAssertion,
   label: string,
-): void {
+): Promise<void> {
+  const validate = await logicalStateValidator();
+  assertShape(validate, expected.rows, `${label} expected state`);
+  assertShape(validate, observed, `${label} observed state`);
   const wanted = normalized(expected.rows, `${label} expected state`);
   const actual = normalized(observed, `${label} observed state`);
   if (expected.mode === "exact") assert.deepStrictEqual(actual, wanted, `${label} exact state`);
@@ -31,6 +36,12 @@ export function assertState(
       .some((row) => partialSelectorMatches(row, selector.where));
     assert.equal(found, false, `${label} forbidden state selector ${JSON.stringify(selector)}`);
   }
+}
+
+function assertShape(validate: ValidateFunction, state: LogicalState, label: string): void {
+  if (validate(state)) return;
+  const detail = schemaErrorsText(validate.errors, "state");
+  throw new FixtureRunnerError(`${label} is outside the logical record shape: ${detail}`);
 }
 
 function assertContains(actual: NormalizedState, wanted: NormalizedState, label: string): void {
@@ -45,18 +56,10 @@ function assertContains(actual: NormalizedState, wanted: NormalizedState, label:
 }
 
 function normalized(state: LogicalState, label: string): NormalizedState {
-  for (const kind of Object.keys(state)) {
-    if (!Object.hasOwn(PRIMARY_KEYS, kind)) {
-      throw new FixtureRunnerError(`${label} has unknown record kind ${kind}`);
-    }
-  }
   const result = {} as NormalizedState;
   for (const kind of KINDS) {
     const key = PRIMARY_KEYS[kind];
     const rows: ReadonlyArray<object> = state[kind] ?? [];
-    if (kind === "store_instance" && rows.length > 1) {
-      throw new FixtureRunnerError(`${label} has ${rows.length} store_instance rows`);
-    }
     const seen = new Set<string>();
     for (const row of rows) {
       const primary = primaryValue(row, key);
