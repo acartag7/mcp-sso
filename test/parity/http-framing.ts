@@ -3,17 +3,26 @@ import type { ObservedMessage } from "./types.ts";
 
 const CR = 13;
 const LF = 10;
-const STATUS_LINE = /^HTTP\/1\.[01] ([0-9]{3})(?: .*)?$/u;
+const TOKEN = "[!#$%&'*+.^_`|~0-9A-Za-z-]+";
+const OWS = "[ \\t]*";
+const FIELD_TEXT = "[\\t \\x21-\\x7e\\x80-\\xff]";
+const QUOTED = '"(?:[\\t \\x21\\x23-\\x5b\\x5d-\\x7e\\x80-\\xff]|\\\\[\\t \\x21-\\x7e\\x80-\\xff])*"';
+const CHUNK_EXT = `(?:${OWS};${OWS}${TOKEN}(?:${OWS}=${OWS}(?:${TOKEN}|${QUOTED}))?)*`;
+const STATUS_LINE = new RegExp(`^HTTP/1\\.[01] ([0-9]{3})(?: ${FIELD_TEXT}*)?$`, "u");
+const FIELD_NAME = new RegExp(`^${TOKEN}$`, "u");
+const FIELD_VALUE = new RegExp(`^${FIELD_TEXT}*$`, "u");
+const CHUNK_LINE = new RegExp(`^([0-9A-Fa-f]+)${CHUNK_EXT}$`, "u");
 const CONTENT_LENGTH = /^(?:0|[1-9][0-9]*)$/u;
-const FIELD_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
-const CHUNK_SIZE = /^([0-9A-Fa-f]+)(?:;.*)?$/u;
+const FORBIDDEN_TRAILERS = new Set(["content-length", "host", "trailer", "transfer-encoding"]);
 
 type Headers = Record<string, string | string[]>;
 type Framing = { kind: "none" } | { kind: "length"; length: number } | { kind: "chunked" };
 
 /** Parse the bytes received so far into the observed response.
  *  Returns `undefined` only when framing proves more bytes are required and the
- *  socket has not ended; a complete message is returned whether or not it has. */
+ *  socket has not ended; a complete message is returned whether or not it has.
+ *  The caller owns the size and time budgets: this function is pure over the
+ *  bytes it is handed and never waits for more. */
 export function parseHttpResponse(raw: Buffer, method: string, ended: boolean): ObservedMessage | undefined {
   let remaining = raw;
   for (;;) {
@@ -40,23 +49,33 @@ function finalMessage(
   status: number, headers: Headers, encoded: Buffer, method: string, ended: boolean,
 ): ObservedMessage | undefined {
   const framing = framingOf(headers);
-  if (method === "HEAD" || status === 204 || status === 205 || status === 304) {
+  if (status === 204 && framing.kind !== "none") {
+    throw new FixtureRunnerError("HTTP 204 response declared Content-Length or Transfer-Encoding");
+  }
+  if (method === "HEAD" || status === 204 || status === 304) {
     if (encoded.byteLength > 0) throw new FixtureRunnerError("bodyless HTTP response contained bytes");
     return { status, headers, body: Buffer.alloc(0) };
   }
-  if (framing.kind === "chunked") {
-    const body = decodeChunked(encoded, ended);
-    return body === undefined ? undefined : { status, headers, body };
+  const body = decodeBody(framing, encoded, ended);
+  if (body === undefined) return undefined;
+  if (status === 205 && body.byteLength > 0) {
+    throw new FixtureRunnerError("HTTP 205 response contained a body");
   }
+  return { status, headers, body };
+}
+
+/** A 205 frames like any other response and only then has to be empty, so a
+ *  declared body is decoded before the status rule judges it. */
+function decodeBody(framing: Framing, encoded: Buffer, ended: boolean): Buffer | undefined {
+  if (framing.kind === "chunked") return decodeChunked(encoded, ended);
   if (framing.kind === "length") {
     if (encoded.byteLength < framing.length && !ended) return undefined;
     if (encoded.byteLength !== framing.length) {
       throw new FixtureRunnerError("HTTP response Content-Length mismatch");
     }
-    return { status, headers, body: encoded };
+    return encoded;
   }
-  if (!ended) return undefined;
-  return { status, headers, body: encoded };
+  return ended ? encoded : undefined;
 }
 
 /** Every framing decision the parser makes about a header block, taken once and
@@ -99,13 +118,18 @@ function headerLine(line: string): [string, string] {
   if (colon <= 0) throw new FixtureRunnerError("HTTP response header line is malformed");
   const name = line.slice(0, colon);
   if (!FIELD_NAME.test(name)) throw new FixtureRunnerError("HTTP response header name is not a token");
-  return [name.toLowerCase(), trimFieldValue(line.slice(colon + 1))];
+  return [name.toLowerCase(), fieldValue(line.slice(colon + 1))];
 }
 
-/** HTTP field values are surrounded by optional whitespace, which RFC 9110 defines
- *  as SP and HTAB only. Any other byte, control or not, is part of the value. */
-function trimFieldValue(value: string): string {
-  return value.replace(/^[ \t]+/u, "").replace(/[ \t]+$/u, "");
+/** Field values carry optional surrounding whitespace, which RFC 9110 defines as
+ *  SP and HTAB only. What survives the trim must be field content: HTAB, SP,
+ *  VCHAR, or obs-text. A NUL, a bare CR or LF, VT, FF, or DEL is not a value. */
+function fieldValue(raw: string): string {
+  const value = raw.replace(/^[ \t]+/u, "").replace(/[ \t]+$/u, "");
+  if (!FIELD_VALUE.test(value)) {
+    throw new FixtureRunnerError("HTTP response header value contains a disallowed byte");
+  }
+  return value;
 }
 
 function contentLength(value: string | string[]): number {
@@ -139,7 +163,7 @@ function decodeChunked(encoded: Buffer, ended: boolean): Buffer | undefined {
 }
 
 function chunkSize(line: string): number {
-  const digits = CHUNK_SIZE.exec(line)?.[1];
+  const digits = CHUNK_LINE.exec(line)?.[1];
   if (digits === undefined) throw new FixtureRunnerError("HTTP response chunk size is malformed");
   const size = Number.parseInt(digits, 16);
   if (!Number.isSafeInteger(size)) throw new FixtureRunnerError("HTTP response chunk size is out of range");
@@ -153,7 +177,11 @@ function endOfChunks(encoded: Buffer, offset: number, chunks: Buffer[], ended: b
   const terminator = encoded.indexOf("\r\n\r\n", offset - 2);
   if (terminator < 0) return truncated(ended);
   for (const line of encoded.subarray(offset, terminator + 2).toString("latin1").split("\r\n")) {
-    if (line.length > 0) headerLine(line);
+    if (line.length === 0) continue;
+    const [name] = headerLine(line);
+    if (FORBIDDEN_TRAILERS.has(name)) {
+      throw new FixtureRunnerError("HTTP response trailer field is not allowed");
+    }
   }
   if (terminator + 4 !== encoded.byteLength) {
     throw new FixtureRunnerError("HTTP response contained bytes after the chunked terminator");
