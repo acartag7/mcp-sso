@@ -1314,6 +1314,50 @@
     {
       "if": {
         "properties": {
+          "kind": { "const": "boot" },
+          "profile": { "const": "portable" }
+        },
+        "required": [
+          "kind",
+          "profile"
+        ]
+      },
+      "then": {
+        "type": "object",
+        "properties": {
+          "then": {
+            "type": "object",
+            "properties": {
+              "boot": {
+                "type": "object",
+                "properties": {
+                  "error": {
+                    "type": "object",
+                    "not": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": ["name"],
+                          "properties": { "name": { "$ref": "#/$defs/presentMatcher" } }
+                        },
+                        {
+                          "type": "object",
+                          "required": ["message"],
+                          "properties": { "message": { "$ref": "#/$defs/presentMatcher" } }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
           "status": {
             "const": "frozen"
           }
