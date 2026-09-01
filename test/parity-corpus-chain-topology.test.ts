@@ -20,6 +20,11 @@ async function realFixture(): Promise<ParityFixture> {
   return loadFixture(resolve(PROJECT_ROOT, "fixtures", `${REAL_ID}.json`));
 }
 
+function markSuperseded(fixture: ParityFixture, replacement: string): void {
+  fixture.status = "superseded";
+  fixture.supersededBy = replacement;
+}
+
 async function withCorpus(
   specs: FixtureSpec[],
   check: (root: string) => Promise<void>,
@@ -85,9 +90,7 @@ test("loadCorpus orders a valid three-step chain independently of file order", a
     { id: third, mutate: (fixture) => { fixture.chain = { id: "three", step: 3, previous: second }; } },
     { id: first, mutate: (fixture) => { fixture.chain = { id: "three", step: 1 }; } },
     { id: second, mutate: (fixture) => { fixture.chain = { id: "three", step: 2, previous: first }; } },
-  ], async (root) => {
-    assert.equal((await loadCorpus(root)).length, 3);
-  });
+  ], async (root) => assert.equal((await loadCorpus(root)).length, 3));
 });
 
 test("loadCorpus rejects a chain with a step gap", async () => {
@@ -159,4 +162,62 @@ test("loadCorpus rejects a predecessor from a different chain", async () => {
     { id: second, mutate: (fixture) => { fixture.chain = { id: "one", step: 2, previous: other }; } },
     { id: other, mutate: (fixture) => { fixture.chain = { id: "two", step: 1 }; } },
   ], `${second}: wrong chain predecessor`);
+});
+
+test("loadCorpus rejects a runnable gap hidden by a superseded first step", async () => {
+  const history = fixtureId("hidden-first");
+  const active = fixtureId("hidden-second");
+  await expectTopologyError([
+    { id: history, mutate: (fixture) => {
+      markSuperseded(fixture, active);
+      fixture.chain = { id: "hidden-first", step: 1 };
+    } },
+    { id: active, mutate: (fixture) => {
+      fixture.chain = { id: "hidden-first", step: 2, previous: history };
+    } },
+  ], "hidden-first: chain steps must be contiguous");
+});
+
+test("loadCorpus rejects a runnable gap hidden by a superseded middle step", async () => {
+  const first = fixtureId("hidden-middle-first");
+  const history = fixtureId("hidden-middle-history");
+  const third = fixtureId("hidden-middle-third");
+  await expectTopologyError([
+    { id: first, mutate: (fixture) => { fixture.chain = { id: "hidden-middle", step: 1 }; } },
+    { id: history, mutate: (fixture) => {
+      markSuperseded(fixture, third);
+      fixture.chain = { id: "hidden-middle", step: 2, previous: first };
+    } },
+    { id: third, mutate: (fixture) => {
+      fixture.chain = { id: "hidden-middle", step: 3, previous: history };
+    } },
+  ], "hidden-middle: chain steps must be contiguous");
+});
+
+test("loadCorpus accepts an active prefix and superseded tail", async () => {
+  const first = fixtureId("prefix-first");
+  const second = fixtureId("prefix-second");
+  const tail = fixtureId("prefix-tail");
+  await withCorpus([
+    { id: first, mutate: (fixture) => { fixture.chain = { id: "prefix", step: 1 }; } },
+    { id: second, mutate: (fixture) => { fixture.chain = { id: "prefix", step: 2, previous: first }; } },
+    { id: tail, mutate: (fixture) => {
+      markSuperseded(fixture, second);
+      fixture.chain = { id: "prefix", step: 3, previous: second };
+    } },
+  ], async (root) => {
+    assert.equal((await loadCorpus(root)).length, 3);
+  });
+});
+
+test("loadCorpus ignores invalid topology on superseded history", async () => {
+  const history = fixtureId("ignored-history");
+  const replacement = fixtureId("ignored-replacement");
+  await withCorpus([
+    { id: history, mutate: (fixture) => {
+      markSuperseded(fixture, replacement);
+      fixture.chain = { id: "ignored", step: 2 };
+    } },
+    { id: replacement },
+  ], async (root) => assert.equal((await loadCorpus(root)).length, 2));
 });

@@ -34,7 +34,7 @@ export async function loadCorpus(root = FIXTURES_ROOT): Promise<ParityFixture[]>
 function validateChainTopology(fixtures: ParityFixture[]): void {
   const chains = new Map<string, ParityFixture[]>();
   for (const fixture of fixtures) {
-    if (!fixture.chain) continue;
+    if (fixture.status === "superseded" || !fixture.chain) continue;
     const members = chains.get(fixture.chain.id) ?? [];
     members.push(fixture);
     chains.set(fixture.chain.id, members);
