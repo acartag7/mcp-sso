@@ -29,7 +29,7 @@ export function randomBytesFrom(random: RandomPort, length: number): Buffer {
       throw new TypeError("RandomPort returned the wrong byte count");
     }
     const snapshot = Buffer.from(value);
-    if (snapshot.byteLength !== length) {
+    if (typedArrayByteLength.call(snapshot) !== length) {
       throw new TypeError("RandomPort returned the wrong byte count");
     }
     return snapshot;

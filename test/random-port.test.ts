@@ -45,6 +45,20 @@ test("randomBytesFrom rejects non-Uint8Array, short, and long results", () => {
     name: "TypeError", message: "RandomPort returned the wrong byte count",
   });
 
+  const originalBufferByteLength = Object.getOwnPropertyDescriptor(Buffer.prototype, "byteLength");
+  try {
+    Object.defineProperty(Buffer.prototype, "byteLength", { configurable: true, value: 3 });
+    assert.throws(() => randomBytesFrom({ bytes: () => paddedSnapshot }, 3), {
+      name: "TypeError", message: "RandomPort returned the wrong byte count",
+    });
+  } finally {
+    if (originalBufferByteLength) {
+      Object.defineProperty(Buffer.prototype, "byteLength", originalBufferByteLength);
+    } else {
+      delete (Buffer.prototype as { byteLength?: number }).byteLength;
+    }
+  }
+
   const proxy = new Proxy(new Uint8Array(4), {});
   assert.throws(() => randomBytesFrom({ bytes: () => proxy }, 4), {
     name: "TypeError", message: "RandomPort returned the wrong byte count",
