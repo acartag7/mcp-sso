@@ -403,7 +403,10 @@
               "properties": {
                 "bodyPointer": {
                   "type": "string",
-                  "pattern": "^/"
+                  "anyOf": [
+                    { "const": "" },
+                    { "pattern": "^/" }
+                  ]
                 }
               }
             },

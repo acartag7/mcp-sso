@@ -2,11 +2,11 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { parseTree, type Node, type ParseError } from "jsonc-parser";
 import { type Ajv2020 as Ajv2020Class, type ValidateFunction } from "ajv/dist/2020.js";
 import type { FormatsPlugin } from "ajv-formats";
 import type { ParityFixture } from "./types.ts";
 import { FixtureRunnerError } from "./error.ts";
+import { parseStrictJson } from "./strict-json.ts";
 
 const PROJECT_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 const SCHEMA_PATH = resolve(PROJECT_ROOT, "fixtures/schema/fixture.schema.json");
@@ -24,33 +24,6 @@ function createAjv(): InstanceType<typeof Ajv2020Class> {
   const instance = new Ajv2020({ allErrors: true, strict: true });
   addFormats(instance);
   return instance;
-}
-
-function parseStrictJson(source: string): unknown {
-  const errors: ParseError[] = [];
-  const tree = parseTree(source, errors, {
-    disallowComments: true,
-    allowTrailingComma: false,
-    allowEmptyContent: false,
-  });
-  if (tree === undefined || errors.length > 0) throw new SyntaxError("invalid JSON");
-  assertUniqueObjectMembers(tree);
-  return JSON.parse(source) as unknown;
-}
-
-function assertUniqueObjectMembers(node: Node): void {
-  const children = node.children ?? [];
-  if (node.type === "object") {
-    const names = new Set<string>();
-    for (const property of children) {
-      if (property.type !== "property") continue;
-      const name = property.children?.[0];
-      if (name?.type !== "string" || typeof name.value !== "string") continue;
-      if (names.has(name.value)) throw new SyntaxError("duplicate object member");
-      names.add(name.value);
-    }
-  }
-  for (const child of children) assertUniqueObjectMembers(child);
 }
 
 function fixedSchemaValidator(): Promise<ValidateFunction> {
