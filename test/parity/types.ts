@@ -14,6 +14,7 @@ export type Matcher = string | ExclusiveField<"absent", true, MatcherKey>
 export interface CaptureReference {
   $capture: { fixture: string; name: string; format: "raw" | "bearer" };
 }
+export type CaptureValues = Map<string, Map<string, string>>;
 
 export interface LogicalState {
   authorization_code?: AuthorizationCodeRow[];
