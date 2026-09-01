@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { UNBOUND_REFRESH_RESOURCE } from "../src/ports/store.ts";
 import { FixtureRunnerError } from "./parity/error.ts";
+import type { LogicalTables } from "./parity/logical-state.ts";
 import { hydrateLogicalState, projectLogicalState } from "./parity/logical-state.ts";
 import type {
   AuthorizationCodeRow, ClientRegistrationRow, ConsentJtiRow, LogicalState,
@@ -22,18 +23,14 @@ function hash(prefix: string): string {
 }
 
 function authRow(overrides: Partial<AuthorizationCodeRow> = {}): AuthorizationCodeRow {
-  return {
-    code_hash: hash("a1"), client_id: "client-a", subject: "user-a", redirect_uri: REDIRECT_URI,
+  return { code_hash: hash("a1"), client_id: "client-a", subject: "user-a", redirect_uri: REDIRECT_URI,
     resource: RESOURCE, scopes: ["mcp:read"], code_challenge: "challenge-a",
-    code_challenge_method: "S256", expires_at: EXPIRES_AT, ...overrides,
-  };
+    code_challenge_method: "S256", expires_at: EXPIRES_AT, ...overrides };
 }
 
 function refreshRow(overrides: Partial<RefreshTokenRow> = {}): RefreshTokenRow {
-  return {
-    token_hash: hash("c3"), family_id: "family-a", client_id: "client-a", subject: "user-a",
-    resource: RESOURCE, scopes: ["mcp:read"], expires_at: EXPIRES_AT, ...overrides,
-  };
+  return { token_hash: hash("c3"), family_id: "family-a", client_id: "client-a", subject: "user-a",
+    resource: RESOURCE, scopes: ["mcp:read"], expires_at: EXPIRES_AT, ...overrides };
 }
 
 function revokedRow(overrides: Partial<RevokedFamilyRow> = {}): RevokedFamilyRow {
@@ -45,10 +42,8 @@ function jtiRow(jti: string, expiresAt = EXPIRES_AT): ConsentJtiRow {
 }
 
 function clientRow(overrides: Partial<ClientRegistrationRow> = {}): ClientRegistrationRow {
-  return {
-    client_id: "client-a", redirect_uris: [REDIRECT_URI],
-    application_type: "native", issued_at_epoch: ISSUED_AT_EPOCH, ...overrides,
-  };
+  return { client_id: "client-a", redirect_uris: [REDIRECT_URI],
+    application_type: "native", issued_at_epoch: ISSUED_AT_EPOCH, ...overrides };
 }
 
 test("a hydrated logical state projects back to the same rows sorted by primary key", () => {
@@ -57,9 +52,7 @@ test("a hydrated logical state projects back to the same rows sorted by primary 
   const jtiA = jtiRow("jti-a");
   const jtiB = jtiRow("jti-b", CONSUMED_AT);
   const refreshA = refreshRow();
-  const refreshB = refreshRow({
-    token_hash: hash("d4"), previous_token_hash: hash("c3"), consumed_at: CONSUMED_AT,
-  });
+  const refreshB = refreshRow({ token_hash: hash("d4"), previous_token_hash: hash("c3"), consumed_at: CONSUMED_AT });
   const revoked = revokedRow({ grant_generation: 3 });
   const clientA = clientRow();
   const clientB = clientRow({ client_id: "client-b", application_type: "web" });
@@ -84,9 +77,7 @@ test("a hydrated logical state projects back to the same rows sorted by primary 
   });
   assert.deepStrictEqual(JSON.parse(JSON.stringify(snapshot)) as unknown, snapshot);
   for (const rows of Object.values(snapshot)) {
-    for (const row of rows) {
-      assert.ok(Object.values(row).every((value) => value !== undefined), JSON.stringify(row));
-    }
+    for (const row of rows) assert.ok(Object.values(row).every((v) => v !== undefined), JSON.stringify(row));
   }
 });
 
@@ -143,29 +134,20 @@ const DUPLICATE_STATES: Array<[keyof LogicalState, LogicalState]> = [
 
 for (const [kind, state] of DUPLICATE_STATES) {
   test(`a duplicate ${kind} primary key is rejected`, () => {
-    assert.throws(
-      () => hydrateLogicalState(state),
-      (error: unknown) => error instanceof FixtureRunnerError
-        && error.message === `${kind} has duplicate primary key`,
-    );
+    assert.throws(() => hydrateLogicalState(state), (error: unknown) => error instanceof FixtureRunnerError
+      && error.message === `${kind} has duplicate primary key`);
   });
 }
 
 test("rows of one family that disagree on resource or generation are rejected", () => {
-  assert.throws(() => hydrateLogicalState({ refresh_token: [
-    refreshRow(), refreshRow({ token_hash: hash("d4"), resource: OTHER_RESOURCE }),
-  ] }), /pre-state refresh family mismatch/);
-  assert.throws(() => hydrateLogicalState({ refresh_token: [
-    refreshRow(), refreshRow({ token_hash: hash("d4"), grant_generation: 1 }),
-  ] }), /pre-state refresh family mismatch/);
-  assert.throws(() => hydrateLogicalState({
-    refresh_token: [refreshRow()],
-    revoked_family: [revokedRow({ family_id: "family-a", grant_generation: 1 })],
-  }), /pre-state revoked family mismatch/);
-  assert.throws(() => hydrateLogicalState({
-    refresh_token: [refreshRow()],
-    revoked_family: [revokedRow({ family_id: "family-a", resource: OTHER_RESOURCE })],
-  }), /pre-state revoked family mismatch/);
+  assert.throws(() => hydrateLogicalState({ refresh_token: [refreshRow(),
+    refreshRow({ token_hash: hash("d4"), resource: OTHER_RESOURCE })] }), /pre-state refresh family mismatch/);
+  assert.throws(() => hydrateLogicalState({ refresh_token: [refreshRow(),
+    refreshRow({ token_hash: hash("d4"), grant_generation: 1 })] }), /pre-state refresh family mismatch/);
+  assert.throws(() => hydrateLogicalState({ refresh_token: [refreshRow()],
+    revoked_family: [revokedRow({ family_id: "family-a", grant_generation: 1 })] }), /pre-state revoked family mismatch/);
+  assert.throws(() => hydrateLogicalState({ refresh_token: [refreshRow()],
+    revoked_family: [revokedRow({ family_id: "family-a", resource: OTHER_RESOURCE })] }), /pre-state revoked family mismatch/);
 });
 
 test("a revoked family that agrees with its refresh rows revokes that one family", () => {
@@ -183,6 +165,30 @@ test("a revoked family that agrees with its refresh rows revokes that one family
 test("more than one store_instance row is rejected", () => {
   const rows = [{ instance_id: INSTANCE_ID }, { instance_id: "Zq8Xn3Cv6Bm1Kl9Rt2Wy4E" }];
   assert.throws(() => hydrateLogicalState({ store_instance: rows }), /state has multiple store_instance rows/);
+});
+
+const BROKEN_FAMILIES: Array<[string, (tables: LogicalTables) => void]> = [
+  ["a refresh row whose family is missing", (t) => { t.families.delete("family-a"); }],
+  ["a family whose resource differs from its rows",
+    (t) => { t.families.set("family-a", { resource: OTHER_RESOURCE, grantGeneration: null }); }],
+  ["a family whose generation differs from its rows",
+    (t) => { t.families.set("family-a", { resource: RESOURCE, grantGeneration: 1 }); }],
+  ["an unrevoked family with no refresh rows", (t) => { t.refreshTokens.clear(); }],
+];
+
+for (const [broken, breakTables] of BROKEN_FAMILIES) {
+  test(`projection rejects ${broken}`, () => {
+    const tables = hydrateLogicalState({ refresh_token: [refreshRow()] });
+    breakTables(tables);
+    assert.throws(() => projectLogicalState(tables, INSTANCE_ID), FixtureRunnerError);
+  });
+}
+
+test("a revoked family with no refresh rows projects exactly one revoked_family row", () => {
+  const snapshot = projectLogicalState(hydrateLogicalState({ revoked_family: [revokedRow()] }), INSTANCE_ID);
+
+  assert.deepStrictEqual(snapshot.revoked_family, [revokedRow()]);
+  assert.deepStrictEqual(snapshot.refresh_token, []);
 });
 
 test("hydration and projection copy array fields instead of sharing them", () => {
@@ -219,21 +225,16 @@ test("projection omits machine client records and keeps native and web ones", ()
   ]);
 });
 
-test("projection rejects a refresh resource that has no logical representation", () => {
-  for (const resource of [null, "", UNBOUND_REFRESH_RESOURCE]) {
-    const tables = hydrateLogicalState({ refresh_token: [refreshRow()] });
+test("projection rejects a token or family resource that has no logical representation", () => {
+  for (const resource of ["", UNBOUND_REFRESH_RESOURCE, null]) {
+    const tables = hydrateLogicalState({ refresh_token: [refreshRow()], revoked_family: [revokedRow()] });
     const record = tables.refreshTokens.get(hash("c3"));
-    assert.ok(record);
+    const family = tables.families.get("family-r");
+    assert.ok(record && family);
     record.resource = resource;
     assert.throws(() => projectLogicalState(tables, INSTANCE_ID), FixtureRunnerError);
-  }
-});
-
-test("projection rejects a revoked family resource that has no logical representation", () => {
-  for (const resource of ["", UNBOUND_REFRESH_RESOURCE]) {
-    const tables = hydrateLogicalState({ revoked_family: [revokedRow()] });
-    const family = tables.families.get("family-r");
-    assert.ok(family);
+    record.resource = RESOURCE;
+    if (resource === null) continue;
     family.resource = resource;
     assert.throws(() => projectLogicalState(tables, INSTANCE_ID), FixtureRunnerError);
   }
@@ -241,10 +242,7 @@ test("projection rejects a revoked family resource that has no logical represent
 
 test("rows sort by code unit order rather than locale collation", () => {
   const rows = [jtiRow("a-jti"), jtiRow("_jti"), jtiRow("Z-jti")];
-  const tables = hydrateLogicalState({ consent_jti: rows });
+  const jtis = projectLogicalState(hydrateLogicalState({ consent_jti: rows }), INSTANCE_ID).consent_jti;
 
-  assert.deepStrictEqual(
-    projectLogicalState(tables, INSTANCE_ID).consent_jti.map((row) => row.jti),
-    ["Z-jti", "_jti", "a-jti"],
-  );
+  assert.deepStrictEqual(jtis.map((row) => row.jti), ["Z-jti", "_jti", "a-jti"]);
 });

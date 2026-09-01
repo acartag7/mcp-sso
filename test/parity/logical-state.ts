@@ -1,8 +1,3 @@
-// Two-way mapping between the portable logical store records of contracts
-// section 19.2 and the reference implementation's in-memory record shapes.
-// Hydration turns `given.state` into tables; projection renders a snapshot for
-// `then.state`. Both directions are pure and copy every array they cross.
-
 import type { ClientRegistration, UserClientRegistration } from "../../src/ports/client-store.ts";
 import type { AuthCodeRecord, RefreshTokenRecord } from "../../src/ports/store.ts";
 import { UNBOUND_REFRESH_RESOURCE, grantGenerationFromStored, refreshResourceFromStored } from "../../src/ports/store.ts";
@@ -33,12 +28,8 @@ export interface LogicalTables {
 
 export function hydrateLogicalState(state: LogicalState): LogicalTables {
   const tables: LogicalTables = {
-    authCodes: new Map(),
-    consentJtis: new Map(),
-    refreshTokens: new Map(),
-    families: new Map(),
-    clients: new Map(),
-    instanceId: undefined,
+    authCodes: new Map(), consentJtis: new Map(), refreshTokens: new Map(),
+    families: new Map(), clients: new Map(), instanceId: undefined,
   };
   for (const row of uniqueRows(state.authorization_code, (r) => r.code_hash, "authorization_code")) {
     tables.authCodes.set(row.code_hash, authRecord(row));
@@ -62,6 +53,7 @@ export function hydrateLogicalState(state: LogicalState): LogicalTables {
 }
 
 export function projectLogicalState(tables: LogicalTables, instanceId: string): Required<LogicalState> {
+  assertConsistentFamilies(tables);
   const jtis: ConsentJtiRow[] = [...tables.consentJtis].map(([jti, expiresAt]) => ({ jti, expires_at: expiresAt }));
   return {
     authorization_code: sortRows([...tables.authCodes.values()].map(authRow), (row) => row.code_hash),
@@ -71,6 +63,28 @@ export function projectLogicalState(tables: LogicalTables, instanceId: string): 
     client_registration: sortRows(userClientRows(tables.clients), (row) => row.client_id),
     store_instance: [{ instance_id: instanceId }],
   };
+}
+
+/** A snapshot certifies the store mutation that produced it, so the binding
+ *  hydration enforces between refresh rows and their families is re-checked here.
+ *  A revoked family with no rows stays valid: revocation outlives the sweep. */
+function assertConsistentFamilies(tables: LogicalTables): void {
+  const referenced = new Set<string>();
+  for (const record of tables.refreshTokens.values()) {
+    const label = `refresh_token ${record.tokenHash}`;
+    const resource = projectableResource(record.resource, label);
+    const family = tables.families.get(record.familyId);
+    if (family === undefined) throw new FixtureRunnerError(`${label} has no family`);
+    if (family.resource !== resource || family.grantGeneration !== record.grantGeneration) {
+      throw new FixtureRunnerError("projected refresh family mismatch");
+    }
+    referenced.add(record.familyId);
+  }
+  for (const [familyId, family] of tables.families) {
+    if (family.revokedAt === undefined && !referenced.has(familyId)) {
+      throw new FixtureRunnerError(`family ${familyId} has no refresh rows`);
+    }
+  }
 }
 
 function uniqueRows<Row>(rows: Row[] | undefined, key: (row: Row) => string, kind: string): Row[] {
@@ -98,7 +112,7 @@ function hydrateRefresh(tables: LogicalTables, row: RefreshTokenRow): void {
     scopes: [...row.scopes],
     expiresAt: row.expires_at,
     grantGeneration,
-    ...storedConsumedAt(row.consumed_at),
+    ...optional("consumedAt", row.consumed_at),
   });
 }
 
@@ -139,10 +153,8 @@ function authRecord(row: AuthorizationCodeRow): AuthCodeRecord {
 
 function clientRecord(row: ClientRegistrationRow): UserClientRegistration {
   return {
-    clientId: row.client_id,
-    redirectUris: [...row.redirect_uris],
-    applicationType: row.application_type,
-    issuedAtEpoch: row.issued_at_epoch,
+    clientId: row.client_id, redirectUris: [...row.redirect_uris],
+    applicationType: row.application_type, issuedAtEpoch: row.issued_at_epoch,
   };
 }
 
@@ -157,7 +169,7 @@ function authRow(record: AuthCodeRecord): AuthorizationCodeRow {
     code_challenge: record.codeChallenge,
     code_challenge_method: record.codeChallengeMethod,
     expires_at: record.expiresAt,
-    ...optionalGeneration(record.grantGeneration),
+    ...optional("grant_generation", record.grantGeneration),
   };
 }
 
@@ -165,14 +177,14 @@ function refreshRow(record: StoredRefresh): RefreshTokenRow {
   return {
     token_hash: record.tokenHash,
     family_id: record.familyId,
-    ...optionalPreviousHash(record.previousTokenHash),
+    ...optional("previous_token_hash", record.previousTokenHash),
     client_id: record.clientId,
     subject: record.subject,
     resource: projectableResource(record.resource, `refresh_token ${record.tokenHash}`),
     scopes: [...record.scopes],
     expires_at: record.expiresAt,
-    ...optionalConsumedAt(record.consumedAt),
-    ...optionalGeneration(record.grantGeneration),
+    ...optional("consumed_at", record.consumedAt),
+    ...optional("grant_generation", record.grantGeneration),
   };
 }
 
@@ -184,7 +196,7 @@ function revokedFamilyRows(families: Map<string, RefreshFamily>): RevokedFamilyR
       family_id: familyId,
       resource: projectableResource(family.resource, `revoked_family ${familyId}`),
       revoked_at: family.revokedAt,
-      ...optionalGeneration(family.grantGeneration),
+      ...optional("grant_generation", family.grantGeneration),
     });
   }
   return rows;
@@ -195,10 +207,8 @@ function userClientRows(clients: Map<string, ClientRegistration>): ClientRegistr
   for (const record of clients.values()) {
     if (record.applicationType === "machine") continue;
     rows.push({
-      client_id: record.clientId,
-      redirect_uris: [...record.redirectUris],
-      application_type: record.applicationType,
-      issued_at_epoch: record.issuedAtEpoch,
+      client_id: record.clientId, redirect_uris: [...record.redirectUris],
+      application_type: record.applicationType, issued_at_epoch: record.issuedAtEpoch,
     });
   }
   return rows;
@@ -214,20 +224,10 @@ function projectableResource(resource: string | null, label: string): string {
   return stored;
 }
 
-function optionalGeneration(value: number | null | undefined): { grant_generation?: number } {
-  return value === null || value === undefined ? {} : { grant_generation: value };
-}
-
-function optionalPreviousHash(value: string | null | undefined): { previous_token_hash?: string } {
-  return value === null || value === undefined ? {} : { previous_token_hash: value };
-}
-
-function optionalConsumedAt(value: string | undefined): { consumed_at?: string } {
-  return value === undefined ? {} : { consumed_at: value };
-}
-
-function storedConsumedAt(value: string | undefined): { consumedAt?: string } {
-  return value === undefined ? {} : { consumedAt: value };
+/** An absent optional member is an absent own property, never one holding
+ *  `undefined`, so a projected row and its JSON form carry the same keys. */
+function optional<Key extends string, Value>(key: Key, value: Value | null | undefined): { [K in Key]?: Value } {
+  return (value === null || value === undefined ? {} : { [key]: value }) as { [K in Key]?: Value };
 }
 
 function sortRows<Row>(rows: Row[], key: (row: Row) => string): Row[] {
