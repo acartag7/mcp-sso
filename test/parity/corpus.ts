@@ -27,7 +27,31 @@ export async function loadCorpus(root = FIXTURES_ROOT): Promise<ParityFixture[]>
     fixtures.push(fixture);
   }
   validateSupersededFixtures(fixtures);
+  validateChainTopology(fixtures);
   return fixtures;
+}
+
+function validateChainTopology(fixtures: ParityFixture[]): void {
+  const chains = new Map<string, ParityFixture[]>();
+  for (const fixture of fixtures) {
+    if (!fixture.chain) continue;
+    const members = chains.get(fixture.chain.id) ?? [];
+    members.push(fixture);
+    chains.set(fixture.chain.id, members);
+  }
+  for (const [chainId, members] of chains) {
+    const ordered = members.toSorted((a, b) => a.chain!.step - b.chain!.step);
+    for (let index = 0; index < ordered.length; index += 1) {
+      const fixture = ordered[index]!;
+      if (fixture.chain!.step !== index + 1) {
+        throw new FixtureRunnerError(`${chainId}: chain steps must be contiguous`);
+      }
+      const expected = index === 0 ? undefined : ordered[index - 1]!.id;
+      if (fixture.chain!.previous !== expected) {
+        throw new FixtureRunnerError(`${fixture.id}: wrong chain predecessor`);
+      }
+    }
+  }
 }
 
 function validateSupersededFixtures(fixtures: ParityFixture[]): void {
