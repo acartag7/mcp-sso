@@ -66,13 +66,42 @@ async function validateQuote(fixture: ParityFixture): Promise<void> {
 function containsCompleteSentence(source: string, quote: string): boolean {
   let index = source.indexOf(quote);
   while (index !== -1) {
-    const before = source.slice(0, index);
     const after = source.slice(index + quote.length);
-    const startsSentence = index === 0 || /[.!?](?:[`*_~"')\]}]+)?\s+$/u.test(before) || /(?:^|\n)[ \t]*(?:(?:[-+*]|\d+[.)]|>)[ \t]+)*(?:[*_~]+)?$/u.test(before);
-    if (startsSentence && /[.!?](?:[`*_~"')\]}]+)?$/u.test(quote) && (after === "" || /^(?:[*_~]+)?\s/u.test(after))) return true;
+    if (startsSentenceAt(source, index) && !hasSecondSentence(quote) && /[.!?](?:[`*_~"')\]}]+)?$/u.test(quote)
+      && (after === "" || /^(?:[`*_~"')\]}]+)?\s/u.test(after))) return true;
     index = source.indexOf(quote, index + 1);
   }
   return false;
+}
+
+function startsSentenceAt(source: string, index: number): boolean {
+  if (index === 0) return true;
+  const before = source.slice(0, index);
+  if (/(?:^|\n)[ \t]*(?:(?:[-+*]|\d+[.)]|[>#])[ \t]+)*(?:[*_~(]+)?$/u.test(before)
+    || /(?:^|\n)\|(?:[^|\n]*\|)*[ \t]*(?:[*_~(]+)?$/u.test(before)) return true;
+  return followsSentencePunctuation(before);
+}
+
+function followsSentencePunctuation(before: string): boolean {
+  const boundary = /([.!?])(?:[`*_~"')\]}]+)?\s+(?:[*_~(]+)?$/u.exec(before);
+  return boundary !== null && (boundary[1] !== "." || !endsLowerInitialism(before, boundary.index));
+}
+
+function hasSecondSentence(quote: string): boolean {
+  for (const boundary of quote.matchAll(/([.!?])(?:[`*_~"')\]}]+)?\s+(?:[*_~(]+)?(?=\S)/gu)) {
+    if (boundary[1] !== "." || !endsLowerInitialism(quote, boundary.index)) return true;
+  }
+  return false;
+}
+
+function endsLowerInitialism(source: string, periodIndex: number): boolean {
+  let cursor = periodIndex;
+  let initials = 0;
+  while (cursor > 0 && source[cursor] === "." && /[a-z]/u.test(source[cursor - 1]!)) {
+    initials += 1;
+    cursor -= 2;
+  }
+  return initials > 1 && (cursor < 0 || !/[A-Za-z]/u.test(source[cursor]!));
 }
 
 export function clauseSource(source: string, clause: string): string {

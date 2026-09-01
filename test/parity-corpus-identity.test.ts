@@ -141,8 +141,40 @@ test("loadCorpus rejects a stale contract quote", async () => {
 
 test("loadCorpus requires the complete contract sentence rather than a matching fragment", async () => {
   const fixture = await realFixture(REAL_IDS[0]);
-  for (const quote of ["array-valued", "token verification.", "An array-valued `authorization` input"]) {
+  const twoSentences = `${fixture.contract.quote} This keeps a one-element array produced by a normalized-header boundary valid without allowing duplicate Authorization input to choose the credential that reaches enforcement.`;
+  for (const quote of ["array-valued", "token verification.", "An array-valued `authorization` input", twoSentences]) {
     await expectCloneError(fixture, /contract quote must be a complete sentence/u, (copy) => { copy.contract.quote = quote; });
+  }
+  const pathId = "06-ports/6.5-abbreviation-fragment";
+  await expectCloneError(fixture, /contract quote must be a complete sentence/u, (copy) => {
+    copy.id = pathId; copy.contract.section = "06"; copy.contract.clause = "6.5";
+    copy.contract.quote = "Cloudflare Access Zero Trust).";
+  }, pathId);
+});
+
+test("loadCorpus accepts complete sentences after Markdown and table-cell boundaries", async () => {
+  const fixture = await realFixture(REAL_IDS[0]);
+  const root = await mkdtemp(join(tmpdir(), "mcp-sso-parity-identity-markdown-"));
+  const listId = "06-ports/6.5-subject-allowlist";
+  const tableId = "06-ports/6.7-bounded-rate-limit";
+  const parentheticalId = "12-store-conformance/12.2-refresh-backfill";
+  try {
+    await writeFixture(root, fixture.id, fixture, (copy) => { copy.contract.quote = "No bypass path."; });
+    await writeFixture(root, listId, fixture, (copy) => {
+      copy.id = listId; copy.contract.section = "06"; copy.contract.clause = "6.5";
+      copy.contract.quote = "Optional subject allowlist (defense-in-depth).";
+    });
+    await writeFixture(root, tableId, fixture, (copy) => {
+      copy.id = tableId; copy.contract.section = "06"; copy.contract.clause = "6.7";
+      copy.contract.quote = "`Bridge` requires a bounded `RateLimitPort`.";
+    });
+    await writeFixture(root, parentheticalId, fixture, (copy) => {
+      copy.id = parentheticalId; copy.contract.section = "12"; copy.contract.clause = "12.2";
+      copy.contract.quote = "The use-case still independently enforces RFC 6749 §6 client binding and revokes on mismatch.";
+    });
+    assert.equal((await loadCorpus(root)).length, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 
