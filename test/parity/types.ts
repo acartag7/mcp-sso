@@ -58,13 +58,10 @@ export interface ProtectedResource {
   requiredScope: string | null;
   success?: { status: number; headers: HeaderMap; body: BodyValue };
 }
-export interface IdentityCheck {
-  input: BodyValue;
-  result?: { ok: true; identity: { subject: string; allowedScopes?: string[]; claims?: Record<string, unknown> } }
-    | { ok: false; reason: string };
-  throw?: { kind: "oauth"; code: string; description: string; status: 401 | 403 }
-    | { kind: "generic" };
-}
+type IdentityResult = { ok: true; identity: { subject: string; allowedScopes?: string[]; claims?: Record<string, unknown> } } | { ok: false; reason: string };
+type IdentityThrow = { kind: "oauth"; code: string; description: string; status: 401 | 403 } | { kind: "generic" };
+type IdentityOutcome = { result: IdentityResult; throw?: never } | { result?: never; throw: IdentityThrow };
+export type IdentityCheck = { input: BodyValue } & IdentityOutcome;
 export interface RateLimitCheck {
   key: string; outcome: "allow" | "deny" | { throws: string };
 }

@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { FixtureRunnerError } from "./parity/error.ts";
 import { loadFixture, compileJsonSchema } from "./parity/schema-json.ts";
-import type { BootGiven, FixtureGiven, FixtureReceipt, HeaderValue, ParityFixture } from "./parity/types.ts";
+import type { BodyValue, BootGiven, FixtureGiven, FixtureReceipt, HeaderValue, IdentityCheck, ParityFixture } from "./parity/types.ts";
 const PROJECT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const execFileAsync = promisify(execFile);
 const HTTP_KEYS_WITHOUT_PUBLIC: FixtureGiven["keys"] = { signingPrivate: "keys/signing-private.pem" };
@@ -20,6 +20,8 @@ type Assert<T extends true> = T;
 type FrozenReceiptIsRequired = Extract<ParityFixture, { status: "frozen" }> extends { receipt: FixtureReceipt } ? true : false;
 type _FrozenReceiptRequirement = Assert<FrozenReceiptIsRequired>;
 type _SupersededByRequirement = Assert<Extract<ParityFixture, { status: "superseded" }> extends { supersededBy: string } ? true : false>;
+type IdentityResultOrThrow = { input: BodyValue; result: NonNullable<IdentityCheck["result"]>; throw?: never } | { input: BodyValue; result?: never; throw: NonNullable<IdentityCheck["throw"]> };
+type _IdentityCheckExclusive = Assert<IdentityCheck extends IdentityResultOrThrow ? true : false>;
 const _bootConfigValues: BootGiven["config"][] = [null, false, "literal", ["literal"]];
 async function fixtureFromRepository(path: string): Promise<ParityFixture> {
   return loadFixture(resolve(PROJECT_ROOT, path));
