@@ -109,6 +109,9 @@ export interface CaptureSpec {
     | { bodyPointer?: never; header: string; urlQuery: string };
   jwt?: { key: "signingPublic"; header: { alg: "ES256"; kid: string; typ: "JWT" }; claims: Record<string, unknown> };
 }
+export interface ObservedMessage {
+  status: number; headers: Record<string, string | string[]>; body: Buffer;
+}
 export interface OutboundCall {
   method: string; url: string; headers: Record<string, Exclude<Matcher, { absent: true }>>; body: Matcher;
 }
