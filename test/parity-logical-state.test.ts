@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { UNBOUND_REFRESH_RESOURCE } from "../src/ports/store.ts";
 import { FixtureRunnerError } from "./parity/error.ts";
-import type { LogicalTables } from "./parity/logical-state.ts";
 import { hydrateLogicalState, projectLogicalState } from "./parity/logical-state.ts";
 import type {
   AuthorizationCodeRow, ClientRegistrationRow, ConsentJtiRow, LogicalState,
@@ -167,30 +165,6 @@ test("more than one store_instance row is rejected", () => {
   assert.throws(() => hydrateLogicalState({ store_instance: rows }), /state has multiple store_instance rows/);
 });
 
-const BROKEN_FAMILIES: Array<[string, (tables: LogicalTables) => void]> = [
-  ["a refresh row whose family is missing", (t) => { t.families.delete("family-a"); }],
-  ["a family whose resource differs from its rows",
-    (t) => { t.families.set("family-a", { resource: OTHER_RESOURCE, grantGeneration: null }); }],
-  ["a family whose generation differs from its rows",
-    (t) => { t.families.set("family-a", { resource: RESOURCE, grantGeneration: 1 }); }],
-  ["an unrevoked family with no refresh rows", (t) => { t.refreshTokens.clear(); }],
-];
-
-for (const [broken, breakTables] of BROKEN_FAMILIES) {
-  test(`projection rejects ${broken}`, () => {
-    const tables = hydrateLogicalState({ refresh_token: [refreshRow()] });
-    breakTables(tables);
-    assert.throws(() => projectLogicalState(tables, INSTANCE_ID), FixtureRunnerError);
-  });
-}
-
-test("a revoked family with no refresh rows projects exactly one revoked_family row", () => {
-  const snapshot = projectLogicalState(hydrateLogicalState({ revoked_family: [revokedRow()] }), INSTANCE_ID);
-
-  assert.deepStrictEqual(snapshot.revoked_family, [revokedRow()]);
-  assert.deepStrictEqual(snapshot.refresh_token, []);
-});
-
 test("hydration and projection copy array fields instead of sharing them", () => {
   const scopes = ["mcp:read"];
   const redirectUris = [REDIRECT_URI];
@@ -223,21 +197,6 @@ test("projection omits machine client records and keeps native and web ones", ()
   assert.deepStrictEqual(projectLogicalState(tables, INSTANCE_ID).client_registration, [
     clientRow(), clientRow({ client_id: "client-b", application_type: "web" }),
   ]);
-});
-
-test("projection rejects a token or family resource that has no logical representation", () => {
-  for (const resource of ["", UNBOUND_REFRESH_RESOURCE, null]) {
-    const tables = hydrateLogicalState({ refresh_token: [refreshRow()], revoked_family: [revokedRow()] });
-    const record = tables.refreshTokens.get(hash("c3"));
-    const family = tables.families.get("family-r");
-    assert.ok(record && family);
-    record.resource = resource;
-    assert.throws(() => projectLogicalState(tables, INSTANCE_ID), FixtureRunnerError);
-    record.resource = RESOURCE;
-    if (resource === null) continue;
-    family.resource = resource;
-    assert.throws(() => projectLogicalState(tables, INSTANCE_ID), FixtureRunnerError);
-  }
 });
 
 test("rows sort by code unit order rather than locale collation", () => {

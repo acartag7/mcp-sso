@@ -53,7 +53,7 @@ export function hydrateLogicalState(state: LogicalState): LogicalTables {
 }
 
 export function projectLogicalState(tables: LogicalTables, instanceId: string): Required<LogicalState> {
-  assertConsistentFamilies(tables);
+  assertProjectableTables(tables);
   const jtis: ConsentJtiRow[] = [...tables.consentJtis].map(([jti, expiresAt]) => ({ jti, expires_at: expiresAt }));
   return {
     authorization_code: sortRows([...tables.authCodes.values()].map(authRow), (row) => row.code_hash),
@@ -65,10 +65,15 @@ export function projectLogicalState(tables: LogicalTables, instanceId: string): 
   };
 }
 
-/** A snapshot certifies the store mutation that produced it, so the binding
- *  hydration enforces between refresh rows and their families is re-checked here.
- *  A revoked family with no rows stays valid: revocation outlives the sweep. */
-function assertConsistentFamilies(tables: LogicalTables): void {
+/** A snapshot certifies the store mutation that produced it, so every invariant
+ *  the tables must hold is re-checked here before a row is built. `consentJtis`
+ *  and `families` are keyed by the id itself and hold no embedded id, so they
+ *  have no key that could disagree. A revoked family with no refresh rows stays
+ *  valid: revocation outlives the sweep that removes its tokens. */
+function assertProjectableTables(tables: LogicalTables): void {
+  assertKeyedById(tables.authCodes, (record) => record.codeHash, "authorization_code");
+  assertKeyedById(tables.refreshTokens, (record) => record.tokenHash, "refresh_token");
+  assertKeyedById(tables.clients, (record) => record.clientId, "client_registration");
   const referenced = new Set<string>();
   for (const record of tables.refreshTokens.values()) {
     const label = `refresh_token ${record.tokenHash}`;
@@ -84,6 +89,14 @@ function assertConsistentFamilies(tables: LogicalTables): void {
     if (family.revokedAt === undefined && !referenced.has(familyId)) {
       throw new FixtureRunnerError(`family ${familyId} has no refresh rows`);
     }
+  }
+}
+
+/** A row is looked up by its map key, so a key that is not the record's own id
+ *  projects a primary key nothing can find again. */
+function assertKeyedById<Row>(table: Map<string, Row>, id: (record: Row) => string, kind: string): void {
+  for (const [key, record] of table) {
+    if (key !== id(record)) throw new FixtureRunnerError(`${kind} map key does not match its record`);
   }
 }
 
@@ -103,15 +116,10 @@ function hydrateRefresh(tables: LogicalTables, row: RefreshTokenRow): void {
   const current = agreeingFamily(tables, row.family_id, row.resource, grantGeneration, "refresh");
   tables.families.set(row.family_id, current ?? { resource: row.resource, grantGeneration });
   tables.refreshTokens.set(row.token_hash, {
-    tokenHash: row.token_hash,
-    familyId: row.family_id,
+    tokenHash: row.token_hash, familyId: row.family_id,
     previousTokenHash: row.previous_token_hash ?? null,
-    clientId: row.client_id,
-    subject: row.subject,
-    resource: row.resource,
-    scopes: [...row.scopes],
-    expiresAt: row.expires_at,
-    grantGeneration,
+    clientId: row.client_id, subject: row.subject, resource: row.resource,
+    scopes: [...row.scopes], expiresAt: row.expires_at, grantGeneration,
     ...optional("consumedAt", row.consumed_at),
   });
 }
@@ -138,16 +146,10 @@ function agreeingFamily(
 
 function authRecord(row: AuthorizationCodeRow): AuthCodeRecord {
   return {
-    codeHash: row.code_hash,
-    clientId: row.client_id,
-    subject: row.subject,
-    redirectUri: row.redirect_uri,
-    resource: row.resource,
-    scopes: [...row.scopes],
-    codeChallenge: row.code_challenge,
-    codeChallengeMethod: row.code_challenge_method,
-    expiresAt: row.expires_at,
-    grantGeneration: grantGenerationFromStored(row.grant_generation),
+    codeHash: row.code_hash, clientId: row.client_id, subject: row.subject,
+    redirectUri: row.redirect_uri, resource: row.resource, scopes: [...row.scopes],
+    codeChallenge: row.code_challenge, codeChallengeMethod: row.code_challenge_method,
+    expiresAt: row.expires_at, grantGeneration: grantGenerationFromStored(row.grant_generation),
   };
 }
 
@@ -160,29 +162,20 @@ function clientRecord(row: ClientRegistrationRow): UserClientRegistration {
 
 function authRow(record: AuthCodeRecord): AuthorizationCodeRow {
   return {
-    code_hash: record.codeHash,
-    client_id: record.clientId,
-    subject: record.subject,
-    redirect_uri: record.redirectUri,
-    resource: record.resource,
-    scopes: [...record.scopes],
-    code_challenge: record.codeChallenge,
-    code_challenge_method: record.codeChallengeMethod,
-    expires_at: record.expiresAt,
-    ...optional("grant_generation", record.grantGeneration),
+    code_hash: record.codeHash, client_id: record.clientId, subject: record.subject,
+    redirect_uri: record.redirectUri, resource: record.resource, scopes: [...record.scopes],
+    code_challenge: record.codeChallenge, code_challenge_method: record.codeChallengeMethod,
+    expires_at: record.expiresAt, ...optional("grant_generation", record.grantGeneration),
   };
 }
 
 function refreshRow(record: StoredRefresh): RefreshTokenRow {
   return {
-    token_hash: record.tokenHash,
-    family_id: record.familyId,
+    token_hash: record.tokenHash, family_id: record.familyId,
     ...optional("previous_token_hash", record.previousTokenHash),
-    client_id: record.clientId,
-    subject: record.subject,
+    client_id: record.clientId, subject: record.subject,
     resource: projectableResource(record.resource, `refresh_token ${record.tokenHash}`),
-    scopes: [...record.scopes],
-    expires_at: record.expiresAt,
+    scopes: [...record.scopes], expires_at: record.expiresAt,
     ...optional("consumed_at", record.consumedAt),
     ...optional("grant_generation", record.grantGeneration),
   };
