@@ -74,12 +74,18 @@ test("randomBytesFrom captures guards and error constructors before port code ru
 
   try {
     assert.deepEqual(randomBytesFrom(port, 1), Buffer.from([0]));
-    assert.throws(() => randomBytesFrom(port, Number.POSITIVE_INFINITY), {
-      name: "RangeError", message: "random byte length must be a positive safe integer",
+    assert.throws(() => randomBytesFrom(port, Number.POSITIVE_INFINITY), (error) => {
+      assert.ok(error instanceof OriginalRangeError);
+      assert.equal(error.name, "RangeError");
+      assert.equal(error.message, "random byte length must be a positive safe integer");
+      return true;
     });
     assert.equal(calls, 1);
-    assert.throws(() => randomBytesFrom(port, 1), {
-      name: "TypeError", message: WRONG_BYTE_COUNT,
+    assert.throws(() => randomBytesFrom(port, 1), (error) => {
+      assert.ok(error instanceof OriginalTypeError);
+      assert.equal(error.name, "TypeError");
+      assert.equal(error.message, WRONG_BYTE_COUNT);
+      return true;
     });
   } finally {
     Number.isSafeInteger = originalSafeInteger;

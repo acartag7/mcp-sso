@@ -17,7 +17,6 @@ const allocateBuffer = Buffer.allocUnsafe;
 
 const WRONG_BYTE_COUNT = "RandomPort returned the wrong byte count";
 const INVALID_LENGTH = "random byte length must be a positive safe integer";
-
 /** Byte-oriented entropy seam used by fixture runs. Production uses Node CSPRNG. */
 export interface RandomPort {
   bytes(length: number): Uint8Array;
