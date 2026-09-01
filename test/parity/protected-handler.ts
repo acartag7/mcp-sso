@@ -14,6 +14,7 @@ const ORIGIN_REJECTED = "Origin not allowed";
 const MISSING_SUCCESS = "protected handler ran without given.protectedResource.success";
 const INVALID_HEADER = "protectedResource.success header contains a capture or non-string value";
 const INVALID_HEADER_LINE = "protectedResource.success header cannot contain CR or LF";
+const NO_HEADER_SOURCE = "protected handler received no request header source";
 
 /** The authorize surface the protected handler consumes. `RequestAuthorizer`
  *  declares TypeScript-private fields, so the class type is nominal and a test
@@ -28,7 +29,10 @@ export interface HostOutcome {
 }
 
 export interface ProtectedOutcomeInput {
-  distinct: Record<string, string[] | undefined>;
+  /** Node occurrence metadata (`IncomingMessage.headersDistinct`), the header
+   *  source a Node-request mount supplies. */
+  distinct?: Record<string, string[] | undefined>;
+  /** The normalized header map, the only source a Fetch `Request` mount has. */
   normalized?: IncomingHttpHeaders;
   authorizer: ProtectedAuthorizer;
   config: BridgeConfig;
@@ -36,12 +40,13 @@ export interface ProtectedOutcomeInput {
 }
 
 /** Compute the protected `/mcp` handler's status, headers, and body bytes for
- *  one inbound request, with no framework involved (§19.2). The Origin gate runs
- *  before authorization, and authorization runs before the fixture's success
- *  response is read. */
+ *  one inbound request, with no framework involved (§19.2). A mount supplies its
+ *  headers as `distinct`, as `normalized`, or as both, and at least one of the
+ *  two is required. The Origin gate runs before authorization, and authorization
+ *  runs before the fixture's success response is read. */
 export async function protectedOutcome(input: ProtectedOutcomeInput): Promise<HostOutcome> {
   const { authorizer, config, protectedResource } = input;
-  const headers = headersFromDistinct(input.distinct, input.normalized);
+  const headers = requestHeaders(input);
   if (originRejected(headers, config)) return jsonRpcOutcome(403, ORIGIN_REJECTED);
   try {
     await authorizer.authorize({
@@ -61,6 +66,19 @@ export async function protectedOutcome(input: ProtectedOutcomeInput): Promise<Ho
     headers: responseHeaders,
     body: encodeResponseBody(success.body, responseHeaders),
   };
+}
+
+/** Read the mount's headers through the library's own precedence: `distinct`
+ *  when it is present, `normalized` only when `distinct` is omitted, and never a
+ *  merge of the two. A mount that passes neither is a runner defect rather than
+ *  an unauthenticated request, so it fails the fixture instead of reaching the
+ *  authorizer as a 401. */
+function requestHeaders(input: ProtectedOutcomeInput): Record<string, string | string[] | undefined> {
+  try {
+    return headersFromDistinct(input.distinct, input.normalized);
+  } catch (error) {
+    throw new FixtureRunnerError(NO_HEADER_SOURCE, { cause: error });
+  }
 }
 
 /** MCP Streamable HTTP DNS-rebinding protection: an absent Origin proceeds, an
