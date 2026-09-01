@@ -1,3 +1,4 @@
+import { URL as PlatformURL } from "node:url";
 import type {
   CaptureReference, CaptureValues, HeaderMap, ObservedMessage, RequestSpec,
 } from "./types.ts";
@@ -116,4 +117,46 @@ export function selectBodyResponseCapture(pointer: string, response: ObservedMes
 
 function isArrayIndex(value: string): boolean {
   return value === "0" || /^[1-9][0-9]*$/u.test(value);
+}
+
+export function selectQueryResponseCapture(
+  headerName: string, parameter: string, response: ObservedMessage,
+): string {
+  if (typeof headerName !== "string" || typeof parameter !== "string" || parameter.length === 0) {
+    throw new FixtureRunnerError("header capture source is malformed");
+  }
+  requireWellFormed(parameter);
+  const header = headerObservation(response.headers, headerName);
+  if (!header.present || typeof header.value !== "string") {
+    throw new FixtureRunnerError("header capture requires exactly one scalar response header");
+  }
+  const rawUrl = header.value;
+  requireWellFormed(rawUrl);
+  rejectUrlPreprocessing(rawUrl);
+  try { decodeURIComponent(rawUrl); }
+  catch { throw new FixtureRunnerError("header capture URL encoding is invalid"); }
+  let parsedUrl: PlatformURL;
+  try { parsedUrl = new PlatformURL(rawUrl); }
+  catch { throw new FixtureRunnerError("header capture response header is not a URL"); }
+  const values = parsedUrl.searchParams.getAll(parameter);
+  if (values.length !== 1) throw new FixtureRunnerError("header capture query is missing or ambiguous");
+  return values[0]!;
+}
+
+function requireWellFormed(value: string): void {
+  if (!(value as string & { isWellFormed(): boolean }).isWellFormed()) {
+    throw new FixtureRunnerError("header capture contains malformed Unicode");
+  }
+}
+
+function rejectUrlPreprocessing(value: string): void {
+  if (/[\u0009\u000a\u000d]/u.test(value)
+    || isTrimmedBoundary(value.charCodeAt(0))
+    || isTrimmedBoundary(value.charCodeAt(value.length - 1))) {
+    throw new FixtureRunnerError("header capture URL contains forbidden raw preprocessing characters");
+  }
+}
+
+function isTrimmedBoundary(code: number): boolean {
+  return code >= 0x00 && code <= 0x20;
 }
