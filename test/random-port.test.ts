@@ -50,6 +50,46 @@ test("randomBytesFrom rejects invalid lengths before calling the port", () => {
   }
 });
 
+test("randomBytesFrom captures guards and error constructors before port code runs", () => {
+  const originalSafeInteger = Number.isSafeInteger;
+  const OriginalRangeError = RangeError;
+  const OriginalTypeError = TypeError;
+  const rangeName = Object.getOwnPropertyDescriptor(OriginalRangeError.prototype, "name");
+  const typeName = Object.getOwnPropertyDescriptor(OriginalTypeError.prototype, "name");
+  let calls = 0;
+  const port: RandomPort = {
+    bytes: (length) => {
+      calls += 1;
+      if (calls === 1) {
+        Number.isSafeInteger = () => true;
+        globalThis.RangeError = class ForgedRangeError extends Error {} as unknown as RangeErrorConstructor;
+        globalThis.TypeError = class ForgedTypeError extends Error {} as unknown as TypeErrorConstructor;
+        Object.defineProperty(OriginalRangeError.prototype, "name", { value: "ForgedRangeError" });
+        Object.defineProperty(OriginalTypeError.prototype, "name", { value: "ForgedTypeError" });
+        return new Uint8Array(length);
+      }
+      return new Uint8Array(0);
+    },
+  };
+
+  try {
+    assert.deepEqual(randomBytesFrom(port, 1), Buffer.from([0]));
+    assert.throws(() => randomBytesFrom(port, Number.POSITIVE_INFINITY), {
+      name: "RangeError", message: "random byte length must be a positive safe integer",
+    });
+    assert.equal(calls, 1);
+    assert.throws(() => randomBytesFrom(port, 1), {
+      name: "TypeError", message: WRONG_BYTE_COUNT,
+    });
+  } finally {
+    Number.isSafeInteger = originalSafeInteger;
+    globalThis.RangeError = OriginalRangeError;
+    globalThis.TypeError = OriginalTypeError;
+    if (rangeName) Object.defineProperty(OriginalRangeError.prototype, "name", rangeName);
+    if (typeName) Object.defineProperty(OriginalTypeError.prototype, "name", typeName);
+  }
+});
+
 test("randomBytesFrom rejects wrong result types and intrinsic byte counts", () => {
   assertWrongByteCount(new ArrayBuffer(4), 4);
   assertWrongByteCount(new DataView(new ArrayBuffer(4)), 4);
