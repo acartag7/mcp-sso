@@ -1,6 +1,9 @@
-import type { CaptureReference, CaptureValues, HeaderMap, RequestSpec } from "./types.ts";
-import { contentTypeEssence } from "./content-type.ts";
+import type {
+  CaptureReference, CaptureSpec, CaptureValues, HeaderMap, ObservedMessage, RequestSpec,
+} from "./types.ts";
+import { contentTypeEssence, isApplicationJsonContentType } from "./content-type.ts";
 import { FixtureRunnerError } from "./error.ts";
+import { bodyObservation, headerObservation } from "./observations.ts";
 
 export function materializeRequest(
   request: RequestSpec, captures: CaptureValues,
@@ -79,4 +82,61 @@ function isExactObject(value: unknown, keys: string[]): value is Record<string, 
 function requireEssence(values: string[], expected: string, label: string): void {
   const essence = values.length === 1 ? contentTypeEssence(values[0]!) : undefined;
   if (essence !== expected) throw new FixtureRunnerError(`${label} body requires Content-Type ${expected}`);
+}
+
+export function selectResponseCapture(
+  source: CaptureSpec["source"], response: ObservedMessage,
+): string {
+  return "bodyPointer" in source
+    ? bodyPointer(response, source.bodyPointer!)
+    : headerQuery(response, source.header, source.urlQuery);
+}
+
+function bodyPointer(response: ObservedMessage, pointer: string): string {
+  if (typeof pointer !== "string" || (pointer !== "" && !pointer.startsWith("/"))) {
+    throw new FixtureRunnerError(`JSON Pointer is malformed: ${pointer}`);
+  }
+  const contentType = headerObservation(response.headers, "content-type");
+  if (!contentType.present || typeof contentType.value !== "string"
+    || !isApplicationJsonContentType(contentType.value)) {
+    throw new FixtureRunnerError("body capture requires one application/json Content-Type occurrence");
+  }
+  const observed = bodyObservation(response.body, response.headers);
+  if (!observed.present) throw new FixtureRunnerError("body capture response has no body");
+  let value: unknown = observed.value;
+  const tokens = pointer === "" ? [] : pointer.slice(1).split("/");
+  for (const token of tokens) {
+    if (/~(?:[^01]|$)/u.test(token)) {
+      throw new FixtureRunnerError(`JSON Pointer escape is malformed: ${pointer}`);
+    }
+    const key = token.replace(/~1/gu, "/").replace(/~0/gu, "~");
+    if (typeof value !== "object" || value === null || !Object.hasOwn(value, key)
+      || (Array.isArray(value) && !isArrayIndex(key))) {
+      throw new FixtureRunnerError(`JSON Pointer did not select a value: ${pointer}`);
+    }
+    value = (value as Record<string, unknown>)[key];
+  }
+  if (typeof value !== "string") {
+    throw new FixtureRunnerError(`JSON Pointer capture is not a string: ${pointer}`);
+  }
+  return value;
+}
+
+function isArrayIndex(value: string): boolean {
+  return value === "0" || /^[1-9][0-9]*$/u.test(value);
+}
+
+function headerQuery(response: ObservedMessage, name: string, parameter: string): string {
+  const header = headerObservation(response.headers, name);
+  if (!header.present || typeof header.value !== "string") {
+    throw new FixtureRunnerError(`header capture requires exactly one ${name} occurrence`);
+  }
+  let url: URL;
+  try { url = new URL(header.value); }
+  catch (error) { throw new FixtureRunnerError(`header capture ${name} is not a URL`, { cause: error }); }
+  const values = url.searchParams.getAll(parameter);
+  if (values.length !== 1) {
+    throw new FixtureRunnerError(`header capture query ${parameter} is missing or ambiguous`);
+  }
+  return values[0]!;
 }
