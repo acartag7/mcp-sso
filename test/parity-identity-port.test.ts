@@ -65,12 +65,18 @@ test("ScriptedIdentity rejects empty, excess, and unconsumed scripts", async () 
   const empty = new ScriptedIdentity([]);
   await assert.rejects(() => empty.verify(undefined), (error: unknown) =>
     runnerError(error, "unmatched IdentityPort.verify call"));
+  assert.throws(() => empty.assertConsumed(), (error: unknown) =>
+    runnerError(error, "all identity checks must be consumed"));
 
   const excess = new ScriptedIdentity([check(absent, rejected("denied"))]);
   await excess.verify(undefined);
+  excess.assertConsumed();
   await assert.rejects(() => excess.verify(undefined), (error: unknown) =>
     runnerError(error, "unmatched IdentityPort.verify call"));
-  excess.assertConsumed();
+  await assert.rejects(() => excess.verify(undefined), (error: unknown) =>
+    runnerError(error, "unmatched IdentityPort.verify call"));
+  assert.throws(() => excess.assertConsumed(), (error: unknown) =>
+    runnerError(error, "all identity checks must be consumed"));
 
   const unconsumed = new ScriptedIdentity([check(absent, rejected("denied"))]);
   assert.throws(() => unconsumed.assertConsumed(), (error: unknown) =>

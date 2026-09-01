@@ -11,6 +11,7 @@ const UNCONSUMED_CHECKS = "all identity checks must be consumed";
 export class ScriptedIdentity implements IdentityPort {
   readonly #checks: IdentityCheck[];
   #index = 0;
+  #unmatchedCall = false;
 
   constructor(checks: IdentityCheck[]) {
     this.#checks = structuredClone(checks);
@@ -18,7 +19,10 @@ export class ScriptedIdentity implements IdentityPort {
 
   async verify(input: unknown): Promise<IdentityResult> {
     const check = this.#checks[this.#index];
-    if (check === undefined) throw new FixtureRunnerError(UNMATCHED_CALL);
+    if (check === undefined) {
+      this.#unmatchedCall = true;
+      throw new FixtureRunnerError(UNMATCHED_CALL);
+    }
     assertBodyValue(input, check.input);
     this.#index += 1;
 
@@ -31,7 +35,7 @@ export class ScriptedIdentity implements IdentityPort {
   }
 
   assertConsumed(): void {
-    if (this.#index !== this.#checks.length) {
+    if (this.#unmatchedCall || this.#index !== this.#checks.length) {
       throw new FixtureRunnerError(UNCONSUMED_CHECKS);
     }
   }
