@@ -27,6 +27,12 @@ importers:
       '@types/node':
         specifier: 24.13.2
         version: 24.13.2
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.20.0)
       express:
         specifier: 5.2.1
         version: 5.2.1
