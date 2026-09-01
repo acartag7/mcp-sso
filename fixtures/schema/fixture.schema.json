@@ -548,6 +548,24 @@
         "grant_generation": { "$ref": "#/$defs/positiveInteger" }
       }
     },
+    "authorizationCodeSelector": {
+      "type": "object",
+      "description": "Partial authorization_code row for then.state.absent; each field keeps its authorizationCodeRow schema",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "code_hash": { "$ref": "#/$defs/authorizationCodeRow/properties/code_hash" },
+        "client_id": { "$ref": "#/$defs/authorizationCodeRow/properties/client_id" },
+        "subject": { "$ref": "#/$defs/authorizationCodeRow/properties/subject" },
+        "redirect_uri": { "$ref": "#/$defs/authorizationCodeRow/properties/redirect_uri" },
+        "resource": { "$ref": "#/$defs/authorizationCodeRow/properties/resource" },
+        "scopes": { "$ref": "#/$defs/authorizationCodeRow/properties/scopes" },
+        "code_challenge": { "$ref": "#/$defs/authorizationCodeRow/properties/code_challenge" },
+        "code_challenge_method": { "$ref": "#/$defs/authorizationCodeRow/properties/code_challenge_method" },
+        "expires_at": { "$ref": "#/$defs/authorizationCodeRow/properties/expires_at" },
+        "grant_generation": { "$ref": "#/$defs/authorizationCodeRow/properties/grant_generation" }
+      }
+    },
     "consentJtiRow": {
       "type": "object",
       "additionalProperties": false,
@@ -558,6 +576,16 @@
       "properties": {
         "jti": { "type": "string", "minLength": 1 },
         "expires_at": { "$ref": "#/$defs/utcTimestamp" }
+      }
+    },
+    "consentJtiSelector": {
+      "type": "object",
+      "description": "Partial consent_jti row for then.state.absent; each field keeps its consentJtiRow schema",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "jti": { "$ref": "#/$defs/consentJtiRow/properties/jti" },
+        "expires_at": { "$ref": "#/$defs/consentJtiRow/properties/expires_at" }
       }
     },
     "refreshTokenRow": {
@@ -585,6 +613,24 @@
         "grant_generation": { "$ref": "#/$defs/positiveInteger" }
       }
     },
+    "refreshTokenSelector": {
+      "type": "object",
+      "description": "Partial refresh_token row for then.state.absent; each field keeps its refreshTokenRow schema",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "token_hash": { "$ref": "#/$defs/refreshTokenRow/properties/token_hash" },
+        "family_id": { "$ref": "#/$defs/refreshTokenRow/properties/family_id" },
+        "previous_token_hash": { "$ref": "#/$defs/refreshTokenRow/properties/previous_token_hash" },
+        "client_id": { "$ref": "#/$defs/refreshTokenRow/properties/client_id" },
+        "subject": { "$ref": "#/$defs/refreshTokenRow/properties/subject" },
+        "resource": { "$ref": "#/$defs/refreshTokenRow/properties/resource" },
+        "scopes": { "$ref": "#/$defs/refreshTokenRow/properties/scopes" },
+        "expires_at": { "$ref": "#/$defs/refreshTokenRow/properties/expires_at" },
+        "consumed_at": { "$ref": "#/$defs/refreshTokenRow/properties/consumed_at" },
+        "grant_generation": { "$ref": "#/$defs/refreshTokenRow/properties/grant_generation" }
+      }
+    },
     "revokedFamilyRow": {
       "type": "object",
       "additionalProperties": false,
@@ -598,6 +644,18 @@
         "resource": { "type": "string", "minLength": 1 },
         "revoked_at": { "$ref": "#/$defs/utcTimestamp" },
         "grant_generation": { "$ref": "#/$defs/positiveInteger" }
+      }
+    },
+    "revokedFamilySelector": {
+      "type": "object",
+      "description": "Partial revoked_family row for then.state.absent; each field keeps its revokedFamilyRow schema",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "family_id": { "$ref": "#/$defs/revokedFamilyRow/properties/family_id" },
+        "resource": { "$ref": "#/$defs/revokedFamilyRow/properties/resource" },
+        "revoked_at": { "$ref": "#/$defs/revokedFamilyRow/properties/revoked_at" },
+        "grant_generation": { "$ref": "#/$defs/revokedFamilyRow/properties/grant_generation" }
       }
     },
     "clientRegistrationRow": {
@@ -628,6 +686,18 @@
         }
       }
     },
+    "clientRegistrationSelector": {
+      "type": "object",
+      "description": "Partial client_registration row for then.state.absent; each field keeps its clientRegistrationRow schema",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "client_id": { "$ref": "#/$defs/clientRegistrationRow/properties/client_id" },
+        "redirect_uris": { "$ref": "#/$defs/clientRegistrationRow/properties/redirect_uris" },
+        "application_type": { "$ref": "#/$defs/clientRegistrationRow/properties/application_type" },
+        "issued_at_epoch": { "$ref": "#/$defs/clientRegistrationRow/properties/issued_at_epoch" }
+      }
+    },
     "storeInstanceRow": {
       "type": "object",
       "additionalProperties": false,
@@ -639,6 +709,15 @@
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]{22,128}$"
         }
+      }
+    },
+    "storeInstanceSelector": {
+      "type": "object",
+      "description": "Partial store_instance row for then.state.absent; each field keeps its storeInstanceRow schema",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "instance_id": { "$ref": "#/$defs/storeInstanceRow/properties/instance_id" }
       }
     },
     "sha256Hex": {
@@ -1215,27 +1294,64 @@
         },
         "absent": {
           "type": "array",
-          "description": "Row selectors that must match no row",
+          "description": "Partial row selectors that must match no row; where holds only fields of kind, each with its row field schema",
           "items": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["kind", "where"],
-            "properties": {
-              "kind": {
-                "enum": [
-                  "authorization_code",
-                  "consent_jti",
-                  "refresh_token",
-                  "revoked_family",
-                  "client_registration",
-                  "store_instance"
-                ]
-              },
-              "where": {
+            "oneOf": [
+              {
                 "type": "object",
-                "minProperties": 1
+                "additionalProperties": false,
+                "required": ["kind", "where"],
+                "properties": {
+                  "kind": { "const": "authorization_code" },
+                  "where": { "$ref": "#/$defs/authorizationCodeSelector" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "where"],
+                "properties": {
+                  "kind": { "const": "consent_jti" },
+                  "where": { "$ref": "#/$defs/consentJtiSelector" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "where"],
+                "properties": {
+                  "kind": { "const": "refresh_token" },
+                  "where": { "$ref": "#/$defs/refreshTokenSelector" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "where"],
+                "properties": {
+                  "kind": { "const": "revoked_family" },
+                  "where": { "$ref": "#/$defs/revokedFamilySelector" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "where"],
+                "properties": {
+                  "kind": { "const": "client_registration" },
+                  "where": { "$ref": "#/$defs/clientRegistrationSelector" }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["kind", "where"],
+                "properties": {
+                  "kind": { "const": "store_instance" },
+                  "where": { "$ref": "#/$defs/storeInstanceSelector" }
+                }
               }
-            }
+            ]
           }
         }
       }
