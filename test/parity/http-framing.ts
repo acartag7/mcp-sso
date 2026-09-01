@@ -5,9 +5,11 @@ const CR = 13;
 const LF = 10;
 const STATUS_LINE = /^HTTP\/1\.[01] ([0-9]{3})(?: .*)?$/u;
 const CONTENT_LENGTH = /^(?:0|[1-9][0-9]*)$/u;
+const FIELD_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/u;
 const CHUNK_SIZE = /^([0-9A-Fa-f]+)(?:;.*)?$/u;
 
 type Headers = Record<string, string | string[]>;
+type Framing = { kind: "none" } | { kind: "length"; length: number } | { kind: "chunked" };
 
 /** Parse the bytes received so far into the observed response.
  *  Returns `undefined` only when framing proves more bytes are required and the
@@ -24,7 +26,7 @@ export function parseHttpResponse(raw: Buffer, method: string, ended: boolean): 
     const encoded = remaining.subarray(boundary + 4);
     if (status >= 100 && status < 200) {
       if (status === 101) throw new FixtureRunnerError("HTTP protocol upgrade responses are unsupported");
-      if (headers["content-length"] !== undefined || headers["transfer-encoding"] !== undefined) {
+      if (framingOf(headers).kind !== "none") {
         throw new FixtureRunnerError("HTTP informational response declared a body");
       }
       remaining = encoded;
@@ -37,10 +39,29 @@ export function parseHttpResponse(raw: Buffer, method: string, ended: boolean): 
 function finalMessage(
   status: number, headers: Headers, encoded: Buffer, method: string, ended: boolean,
 ): ObservedMessage | undefined {
+  const framing = framingOf(headers);
   if (method === "HEAD" || status === 204 || status === 205 || status === 304) {
     if (encoded.byteLength > 0) throw new FixtureRunnerError("bodyless HTTP response contained bytes");
     return { status, headers, body: Buffer.alloc(0) };
   }
+  if (framing.kind === "chunked") {
+    const body = decodeChunked(encoded, ended);
+    return body === undefined ? undefined : { status, headers, body };
+  }
+  if (framing.kind === "length") {
+    if (encoded.byteLength < framing.length && !ended) return undefined;
+    if (encoded.byteLength !== framing.length) {
+      throw new FixtureRunnerError("HTTP response Content-Length mismatch");
+    }
+    return { status, headers, body: encoded };
+  }
+  if (!ended) return undefined;
+  return { status, headers, body: encoded };
+}
+
+/** Every framing decision the parser makes about a header block, taken once and
+ *  the same way for informational, bodyless, and ordinary responses. */
+function framingOf(headers: Headers): Framing {
   const transfer = headers["transfer-encoding"];
   const declared = headers["content-length"];
   if (transfer !== undefined && declared !== undefined) {
@@ -50,17 +71,10 @@ function finalMessage(
     if (typeof transfer !== "string" || transfer.toLowerCase() !== "chunked") {
       throw new FixtureRunnerError("HTTP response Transfer-Encoding is ambiguous or unsupported");
     }
-    const body = decodeChunked(encoded, ended);
-    return body === undefined ? undefined : { status, headers, body };
+    return { kind: "chunked" };
   }
-  if (declared !== undefined) {
-    const length = contentLength(declared);
-    if (encoded.byteLength < length && !ended) return undefined;
-    if (encoded.byteLength !== length) throw new FixtureRunnerError("HTTP response Content-Length mismatch");
-    return { status, headers, body: encoded };
-  }
-  if (!ended) return undefined;
-  return { status, headers, body: encoded };
+  if (declared !== undefined) return { kind: "length", length: contentLength(declared) };
+  return { kind: "none" };
 }
 
 function parseHead(head: Buffer): { status: number; headers: Headers } {
@@ -83,7 +97,9 @@ function headerLine(line: string): [string, string] {
   }
   const colon = line.indexOf(":");
   if (colon <= 0) throw new FixtureRunnerError("HTTP response header line is malformed");
-  return [line.slice(0, colon).toLowerCase(), trimFieldValue(line.slice(colon + 1))];
+  const name = line.slice(0, colon);
+  if (!FIELD_NAME.test(name)) throw new FixtureRunnerError("HTTP response header name is not a token");
+  return [name.toLowerCase(), trimFieldValue(line.slice(colon + 1))];
 }
 
 /** HTTP field values are surrounded by optional whitespace, which RFC 9110 defines

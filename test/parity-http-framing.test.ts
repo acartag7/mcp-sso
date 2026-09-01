@@ -85,6 +85,33 @@ test("upgrade and body-bearing informational responses are rejected", () => {
     /HTTP informational response declared a body/u);
 });
 
+test("bodyless responses are held to the same framing validation as a 200", () => {
+  fails(frame(["HTTP/1.1 204 No Content", "content-length: 0", "content-length: 0"]), false,
+    /HTTP response Content-Length is ambiguous or malformed/u);
+  fails(frame(["HTTP/1.1 204 No Content", "transfer-encoding: chunked", "content-length: 0"]), false,
+    /HTTP response declared both Transfer-Encoding and Content-Length/u);
+  fails(frame(["HTTP/1.1 200 OK", "content-length: 01"]), false,
+    /HTTP response Content-Length is ambiguous or malformed/u, "HEAD");
+  fails(frame(["HTTP/1.1 304 Not Modified", "transfer-encoding: gzip"]), false,
+    /HTTP response Transfer-Encoding is ambiguous or unsupported/u);
+});
+
+test("a header name outside the HTTP token grammar is rejected", () => {
+  for (const name of [
+    "Content-Length ", "Transfer-Encoding ", "x\tname", "x\u0001name", "x(name", 'x"name', "x\u00e9name",
+  ]) {
+    fails(frame(["HTTP/1.1 200 OK", `${name}: 2`], "hi"), true,
+      /HTTP response header name is not a token/u);
+    fails(frame(["HTTP/1.1 200 OK", `${name}: 2`], "hi"), false,
+      /HTTP response header name is not a token/u);
+  }
+});
+
+test("a trailer name outside the HTTP token grammar is rejected", () => {
+  fails(chunked("2\r\nhi\r\n0\r\nx trailer: t\r\n\r\n"), true,
+    /HTTP response header name is not a token/u);
+});
+
 test("a HEAD response reports no body even when Content-Length is declared", () => {
   const message = observed(frame(["HTTP/1.1 200 OK", "content-length: 12"]), false, "HEAD");
   assert.equal(message.body.byteLength, 0);
