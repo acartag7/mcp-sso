@@ -64,8 +64,8 @@ function composeHeaders(input: RealHttpRequest, base: URL): string[] {
   const composed = names.has("host") ? [] : ["Host", base.host];
   for (const entry of declared) composed.push(entry);
   if (!names.has("connection")) composed.push("Connection", "close");
-  if (input.body !== undefined && !names.has("content-length") && !names.has("transfer-encoding")) {
-    composed.push("Content-Length", String(input.body.byteLength));
+  if (!names.has("content-length") && !names.has("transfer-encoding")) {
+    composed.push("Content-Length", String(input.body?.byteLength ?? 0));
   }
   return composed;
 }

@@ -103,7 +103,7 @@ test("an omitted Host and Connection are supplied for the mounted server", async
   });
   assert.equal(observed.status, 200);
   assert.deepEqual(mounted.recorded[0]?.rawHeaders,
-    ["Host", mounted.host, "x-probe", "one", "Connection", "close"]);
+    ["Host", mounted.host, "x-probe", "one", "Connection", "close", "Content-Length", "0"]);
 });
 
 test("a body with no declared framing is sent with an exact Content-Length", async (t) => {
@@ -198,6 +198,17 @@ test("a server that never answers is rejected within the configured timeout",
     "HTTP request timed out");
   const elapsed = Date.now() - started;
   assert.ok(elapsed < 3000, `timeout took ${elapsed} ms`);
+});
+
+test("a bodyless POST declares Content-Length 0 instead of Node's implicit chunking", async (t) => {
+  const mounted = await mount(ok);
+  t.after(() => mounted.close());
+  await sendRealHttp({
+    base: mounted.base, method: "POST", path: "/empty", timeoutMs: 2000, headers: [],
+  });
+  assert.deepEqual(occurrences(mounted.recorded[0]?.rawHeaders ?? [], "transfer-encoding"), []);
+  assert.deepEqual(occurrences(mounted.recorded[0]?.rawHeaders ?? [], "content-length"), ["0"]);
+  assert.equal(mounted.recorded[0]?.body.toString("utf8"), "");
 });
 
 test("an IPv6 loopback base reaches the mounted server without DNS resolution", async (t) => {
