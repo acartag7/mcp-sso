@@ -19,10 +19,8 @@ const FIXTURE_PATHS = [
 ] as const;
 
 type Assert<T extends true> = T;
-type FrozenReceiptIsRequired = Extract<ParityFixture, { status: "frozen" }> extends { receipt: FixtureReceipt }
-  ? true : false;
+type FrozenReceiptIsRequired = Extract<ParityFixture, { status: "frozen" }> extends { receipt: FixtureReceipt } ? true : false;
 type _FrozenReceiptRequirement = Assert<FrozenReceiptIsRequired>;
-
 async function fixtureFromRepository(path: string): Promise<ParityFixture> {
   return loadFixture(resolve(PROJECT_ROOT, path));
 }
