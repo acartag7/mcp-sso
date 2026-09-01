@@ -7,6 +7,15 @@ import { ScriptedDnsResolver } from "./parity/scripted-dns.ts";
 const exchange = (url: string): { request: { url: string } } => ({ request: { url } });
 const answer = [{ address: "93.184.216.34", family: 4 }];
 const undeclaredError = "fixture DNS lookup is not declared by an HTTPS exchange";
+const stickyError = "fixture DNS lookup accounting previously failed";
+
+function assertStickyFailure(resolver: ScriptedDnsResolver, hostname: string): void {
+  assert.throws(
+    () => resolver.assertNoUnexpectedCalls(),
+    (error: unknown) => error instanceof FixtureRunnerError
+      && error.message === stickyError && !error.message.includes(hostname),
+  );
+}
 
 test("declared HTTPS hostname resolves to the fixed public address", async () => {
   const resolver = new ScriptedDnsResolver([exchange("https://client.example/metadata.json")]);
@@ -18,13 +27,14 @@ test("URL parsing canonicalizes hostname case and an explicit default port", asy
   assert.deepEqual(await resolver.resolve("client.example"), answer);
 });
 
-test("multiple declared HTTPS hostnames are admitted", async () => {
+test("multiple declared HTTPS hostname calls assert clean", async () => {
   const resolver = new ScriptedDnsResolver([
     exchange("https://first.example/client.json"),
     exchange("https://second.example/keys.json"),
   ]);
   assert.deepEqual(await resolver.resolve("first.example"), answer);
   assert.deepEqual(await resolver.resolve("second.example"), answer);
+  assert.doesNotThrow(() => resolver.assertNoUnexpectedCalls());
 });
 
 test("exact localhost resolves to the fixed loopback address", async () => {
@@ -42,21 +52,27 @@ test("a localhost suffix near-miss resolves to the public address", async () => 
   assert.deepEqual(await resolver.resolve("notlocalhost"), answer);
 });
 
-test("undeclared hostname fails without echoing the hostname", async () => {
+test("a caught undeclared lookup stays failed after a declared success", async () => {
   const hostname = "private.undeclared.example";
+  const resolver = new ScriptedDnsResolver([exchange("https://client.example/metadata.json")]);
   await assert.rejects(
-    () => new ScriptedDnsResolver([]).resolve(hostname),
+    () => resolver.resolve(hostname),
     (error: unknown) => error instanceof FixtureRunnerError
       && error.message === undeclaredError && !error.message.includes(hostname),
   );
+  assertStickyFailure(resolver, hostname);
+  assert.deepEqual(await resolver.resolve("client.example"), answer);
+  assertStickyFailure(resolver, hostname);
 });
 
 test("a hostname declared only over HTTP remains rejected", async () => {
-  const resolver = new ScriptedDnsResolver([exchange("http://client.example/metadata.json")]);
+  const hostname = "client.example";
+  const resolver = new ScriptedDnsResolver([exchange(`http://${hostname}/metadata.json`)]);
   await assert.rejects(
-    () => resolver.resolve("client.example"),
+    () => resolver.resolve(hostname),
     (error: unknown) => error instanceof FixtureRunnerError && error.message === undeclaredError,
   );
+  assertStickyFailure(resolver, hostname);
 });
 
 test("mutating one answer cannot affect a later answer", async () => {
