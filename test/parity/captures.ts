@@ -132,6 +132,7 @@ export function selectQueryResponseCapture(
   }
   const rawUrl = header.value;
   requireWellFormed(rawUrl);
+  rejectUrlPreprocessing(rawUrl);
   try { decodeURIComponent(rawUrl); }
   catch { throw new FixtureRunnerError("header capture URL encoding is invalid"); }
   let parsedUrl: PlatformURL;
@@ -146,4 +147,16 @@ function requireWellFormed(value: string): void {
   if (!(value as string & { isWellFormed(): boolean }).isWellFormed()) {
     throw new FixtureRunnerError("header capture contains malformed Unicode");
   }
+}
+
+function rejectUrlPreprocessing(value: string): void {
+  if (/[\u0009\u000a\u000d]/u.test(value)
+    || isTrimmedBoundary(value.charCodeAt(0))
+    || isTrimmedBoundary(value.charCodeAt(value.length - 1))) {
+    throw new FixtureRunnerError("header capture URL contains forbidden raw preprocessing characters");
+  }
+}
+
+function isTrimmedBoundary(code: number): boolean {
+  return code >= 0x00 && code <= 0x20;
 }

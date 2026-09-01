@@ -159,3 +159,47 @@ test("query captures preserve valid supplementary-plane Unicode", () => {
     location: `https://example.test/callback?token=${value}`,
   })), value);
 });
+
+test("query captures reject raw WHATWG-preprocessed controls without echoing input", () => {
+  const controls = ["\t", "\n", "\r"];
+  const urls = [
+    (control: string) => `http${control}s://example.test/callback?token=value`,
+    (control: string) => `https://exa${control}mple.test/callback?token=value`,
+    (control: string) => `https://example.test/call${control}back?token=value`,
+    (control: string) => `https://example.test/callback?to${control}ken=value`,
+    (control: string) => `https://example.test/callback?token=va${control}lue`,
+    (control: string) => `https://example.test/callback#frag${control}ment?token=value`,
+  ];
+  for (const control of controls) {
+    for (const makeUrl of urls) {
+      const error = failure("location", "token", response({ location: makeUrl(control) }),
+        /forbidden raw preprocessing/u);
+      assert.doesNotMatch(error.message, /value|example\.test/u);
+    }
+  }
+  for (const boundary of ["\u0000", "\u000b", "\u000c", "\u001f", " "]) {
+    for (const url of [
+      `${boundary}https://example.test/callback?token=value`,
+      `https://example.test/callback?token=value${boundary}`,
+    ]) {
+      const error = failure("location", "token", response({ location: url }),
+        /forbidden raw preprocessing/u);
+      assert.doesNotMatch(error.message, /value|example\.test/u);
+    }
+  }
+});
+
+test("query captures accept encoded controls and internal raw spaces", () => {
+  assert.equal(selectQueryResponseCapture("location", "token", response({
+    location: "https://example.test/callback?token=a%09b%0Ac%0Dd%20e",
+  })), "a\tb\nc\rd e");
+  assert.equal(selectQueryResponseCapture("location", "token", response({
+    location: "https://example.test/callback?token=value with spaces",
+  })), "value with spaces");
+  assert.equal(selectQueryResponseCapture("location", "token with space", response({
+    location: "https://example.test/callback?token with space=value",
+  })), "value");
+  assert.equal(selectQueryResponseCapture("location", "token", response({
+    location: "https://example.test/path with space?token=value#fragment with space",
+  })), "value");
+});
