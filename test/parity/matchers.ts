@@ -20,6 +20,15 @@ export function matcherMatches(value: unknown, matcher: Exclude<Matcher, { absen
   return validate(value) as boolean;
 }
 
+export function partialSelectorMatches(
+  value: object,
+  selector: Readonly<Record<string, unknown>>,
+): boolean {
+  return Object.entries(selector).every(([key, expected]) =>
+    Object.hasOwn(value, key)
+      && deepEqual((value as Readonly<Record<string, unknown>>)[key], expected));
+}
+
 function deepEqual(left: unknown, right: unknown): boolean {
   try {
     assert.deepStrictEqual(left, right);
