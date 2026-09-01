@@ -48,6 +48,10 @@ test("ScriptedIdentity matches absent and deeply equal typed values in order", a
     assert(!String(error).includes("subject"));
     return true;
   });
+  assert.throws(() => mismatch.assertConsumed(), (error: unknown) =>
+    runnerError(error, "all identity checks must be consumed"));
+  assert.deepEqual(await mismatch.verify({ number: "1" }), accepted("subject"));
+  mismatch.assertConsumed();
 
   const nullIsPresent = new ScriptedIdentity([check(absent, accepted("subject"))]);
   await assert.rejects(() => nullIsPresent.verify(null), (error: unknown) =>
@@ -66,6 +70,7 @@ test("ScriptedIdentity rejects empty, excess, and unconsumed scripts", async () 
   await excess.verify(undefined);
   await assert.rejects(() => excess.verify(undefined), (error: unknown) =>
     runnerError(error, "unmatched IdentityPort.verify call"));
+  excess.assertConsumed();
 
   const unconsumed = new ScriptedIdentity([check(absent, rejected("denied"))]);
   assert.throws(() => unconsumed.assertConsumed(), (error: unknown) =>
@@ -85,6 +90,7 @@ test("ScriptedIdentity maps OAuth and generic throws exactly", async () => {
     assert.equal(error.redirect, undefined);
     return true;
   });
+  oauth.assertConsumed();
 
   const generic = new ScriptedIdentity([{
     input: absent,
@@ -98,6 +104,7 @@ test("ScriptedIdentity maps OAuth and generic throws exactly", async () => {
     assert(!error.message.includes("fixture"));
     return true;
   });
+  generic.assertConsumed();
 });
 
 test("ScriptedIdentity clones accepted and rejected results", async () => {

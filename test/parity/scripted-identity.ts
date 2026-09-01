@@ -19,8 +19,8 @@ export class ScriptedIdentity implements IdentityPort {
   async verify(input: unknown): Promise<IdentityResult> {
     const check = this.#checks[this.#index];
     if (check === undefined) throw new FixtureRunnerError(UNMATCHED_CALL);
-    this.#index += 1;
     assertBodyValue(input, check.input);
+    this.#index += 1;
 
     if (check.throw?.kind === "oauth") {
       throw new OAuthError(check.throw.code, check.throw.description, check.throw.status);
