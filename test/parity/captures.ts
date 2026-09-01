@@ -1,9 +1,11 @@
+import type { CryptoKey } from "jose";
 import { URL as PlatformURL } from "node:url";
 import type {
-  CaptureReference, CaptureValues, HeaderMap, ObservedMessage, RequestSpec,
+  CaptureReference, CaptureSpec, CaptureValues, HeaderMap, ObservedMessage, RequestSpec,
 } from "./types.ts";
 import { contentTypeEssence, isApplicationJsonContentType } from "./content-type.ts";
 import { FixtureRunnerError } from "./error.ts";
+import { assertJwt } from "./jwt-capture.ts";
 import { bodyObservation, headerObservation } from "./observations.ts";
 
 export function materializeRequest(
@@ -83,6 +85,27 @@ function isExactObject(value: unknown, keys: string[]): value is Record<string, 
 function requireEssence(values: string[], expected: string, label: string): void {
   const essence = values.length === 1 ? contentTypeEssence(values[0]!) : undefined;
   if (essence !== expected) throw new FixtureRunnerError(`${label} body requires Content-Type ${expected}`);
+}
+
+export async function captureResponse(
+  fixtureId: string, specs: CaptureSpec[] | undefined, response: ObservedMessage,
+  keys: { signingPublic?: CryptoKey }, captures: CaptureValues,
+): Promise<void> {
+  if (!specs?.length) return;
+  const values = new Map<string, string>();
+  for (const spec of specs) {
+    if (values.has(spec.name)) throw new FixtureRunnerError(`${fixtureId}: duplicate capture name ${spec.name}`);
+    const value = spec.source.bodyPointer !== undefined
+      ? selectBodyResponseCapture(spec.source.bodyPointer, response)
+      : selectQueryResponseCapture(spec.source.header, spec.source.urlQuery, response);
+    if (spec.jwt) {
+      const signingPublic = spec.jwt.key === "signingPublic" ? keys.signingPublic : undefined;
+      if (signingPublic === undefined) throw new FixtureRunnerError("captured JWT requires signingPublic key");
+      await assertJwt(value, spec.jwt, signingPublic);
+    }
+    values.set(spec.name, value);
+  }
+  captures.set(fixtureId, values);
 }
 
 export function selectBodyResponseCapture(pointer: string, response: ObservedMessage): string {
