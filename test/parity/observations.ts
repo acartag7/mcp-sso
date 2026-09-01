@@ -1,4 +1,5 @@
 import { FixtureRunnerError } from "./error.ts";
+import { isApplicationJsonContentType } from "./content-type.ts";
 
 export type Observation =
   | { present: false; value?: never }
@@ -20,8 +21,7 @@ export function bodyObservation(
   const contentType = headerObservation(headers, "content-type");
   const value = contentType.present && typeof contentType.value === "string"
     ? contentType.value : undefined;
-  const essence = value?.split(";", 1)[0]?.replace(/^[ \t]+|[ \t]+$/g, "").toLowerCase();
-  if (essence === "application/json") {
+  if (value !== undefined && isApplicationJsonContentType(value)) {
     try { return { present: true, value: JSON.parse(text) }; }
     catch (error) {
       throw new FixtureRunnerError("observed application/json body is invalid", { cause: error });
