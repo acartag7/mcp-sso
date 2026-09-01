@@ -124,6 +124,19 @@ test("a HEAD response observes an empty body even when Content-Length is declare
   assert.equal(observed.body.byteLength, 0);
 });
 
+test("a header block far above the parser default is observed in full", async (t) => {
+  const mounted = await mountRaw(
+    "HTTP/1.1 200 OK\r\n" + Array.from({ length: 5 }, (_, i) => `x-big-${i}: ${"b".repeat(8192)}`).join("\r\n")
+    + "\r\nContent-Length: 2\r\n\r\nok");
+  t.after(() => mounted.close());
+  const observed = await sendRealHttp(get(mounted, "/wide", 5000));
+  assert.equal(observed.status, 200);
+  assert.equal(observed.body.toString("utf8"), "ok");
+  for (let i = 0; i < 5; i += 1) {
+    assert.equal(observed.headers[`x-big-${i}`], "b".repeat(8192));
+  }
+});
+
 test("a response with two Content-Length header lines is rejected by the parser", async (t) => {
   const mounted = await mountRaw(
     "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\nhello");

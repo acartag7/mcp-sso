@@ -12,6 +12,10 @@ export interface RealHttpRequest {
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
+/** Node's parser default (16 KiB) rejects header blocks a schema-valid fixture
+ *  may declare, and the fixture contract names no bound, so the limit here sits
+ *  far above fixture scale: the fixture document itself is the real bound. */
+const MAX_HEADER_BYTES = 16 * 1024 * 1024;
 const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 const CR_OR_LF = /[\r\n]/u;
 
@@ -77,6 +81,7 @@ function open(input: RealHttpRequest, base: URL, headers: string[]): ClientReque
       method: input.method,
       headers,
       agent: false,
+      maxHeaderSize: MAX_HEADER_BYTES,
     });
   } catch (cause) { throw new FixtureRunnerError(UNBUILDABLE, { cause }); }
 }
