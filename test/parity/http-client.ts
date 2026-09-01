@@ -12,7 +12,6 @@ export interface RealHttpRequest {
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
-const MAX_BODY_BYTES = 1024 * 1024;
 const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 const CR_OR_LF = /[\r\n]/u;
 
@@ -25,7 +24,6 @@ const UNBUILDABLE = "HTTP request could not be built";
 const UPGRADE_UNSUPPORTED = "HTTP protocol upgrade responses are unsupported";
 const TRANSPORT_FAILED = "HTTP request failed on the wire";
 const TIMED_OUT = "HTTP request timed out";
-const BODY_TOO_LARGE = "HTTP response body exceeded the observation limit";
 const NO_STATUS = "HTTP response carried no status code";
 
 export async function sendRealHttp(input: RealHttpRequest): Promise<ObservedMessage> {
@@ -127,12 +125,7 @@ function readResponse(
   fail: (message: string, cause?: unknown) => void,
 ): void {
   const chunks: Buffer[] = [];
-  let total = 0;
-  response.on("data", (chunk: Buffer) => {
-    total += chunk.byteLength;
-    if (total > MAX_BODY_BYTES) { fail(BODY_TOO_LARGE); return; }
-    chunks.push(chunk);
-  });
+  response.on("data", (chunk: Buffer) => { chunks.push(chunk); });
   response.on("error", (cause) => fail(TRANSPORT_FAILED, cause));
   response.on("end", () => {
     const status = response.statusCode;

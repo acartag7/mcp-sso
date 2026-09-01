@@ -154,11 +154,13 @@ test("a 101 protocol upgrade response is rejected", { timeout: 10000 }, async (t
   await expectRejection(get(mounted, "/", 1000), "HTTP protocol upgrade responses are unsupported");
 });
 
-test("a response body above the observation limit is rejected", { timeout: 10000 }, async (t) => {
+test("a large response body is observed byte for byte", { timeout: 10000 }, async (t) => {
+  const payload = Buffer.alloc(1536 * 1024, 0x61);
   const mounted = await mount((response) => {
     response.writeHead(200, ["Content-Type", "application/octet-stream"]);
-    response.end(Buffer.alloc(2 * 1024 * 1024, 0x61));
+    response.end(payload);
   });
   t.after(() => mounted.close());
-  await expectRejection(get(mounted, "/big", 5000), "HTTP response body exceeded the observation limit");
+  const observed = await sendRealHttp(get(mounted, "/big", 5000));
+  assert.deepEqual(observed.body, payload);
 });
