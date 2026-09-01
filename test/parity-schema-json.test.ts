@@ -8,7 +8,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { FixtureRunnerError } from "./parity/error.ts";
 import { loadFixture, compileJsonSchema } from "./parity/schema-json.ts";
-import type { FixtureGiven, ParityFixture } from "./parity/types.ts";
+import type { FixtureGiven, FixtureReceipt, HeaderValue, ParityFixture } from "./parity/types.ts";
 
 const PROJECT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const execFileAsync = promisify(execFile);
@@ -17,6 +17,11 @@ const FIXTURE_PATHS = [
   ["fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable.json", "portable"],
   ["fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json", "host"],
 ] as const;
+
+type Assert<T extends true> = T;
+type FrozenReceiptIsRequired = Extract<ParityFixture, { status: "frozen" }> extends { receipt: FixtureReceipt }
+  ? true : false;
+type _FrozenReceiptRequirement = Assert<FrozenReceiptIsRequired>;
 
 async function fixtureFromRepository(path: string): Promise<ParityFixture> {
   return loadFixture(resolve(PROJECT_ROOT, path));
@@ -68,6 +73,25 @@ test("loads both section 8.4 fixtures by explicit path", async () => {
     const fixture = await fixtureFromRepository(path);
     assert.equal(fixture.profile, profile);
     assert.equal(fixture.kind, "fixture");
+  }
+});
+
+test("loads zero- and one-element header arrays without selecting occurrences", async () => {
+  const fixture = await fixtureFromRepository(FIXTURE_PATHS[0][0]);
+  if (fixture.kind !== "fixture") throw new Error("expected an HTTP fixture");
+  const authorizationValues: HeaderValue[] = [[], ["Bearer one"]];
+  for (const authorization of authorizationValues) {
+    const { directory, path } = await writeTemporaryFixture(fixture, (copy) => {
+      if (copy.kind !== "fixture") throw new Error("expected an HTTP fixture");
+      copy.when.request.headers = { ...copy.when.request.headers, authorization };
+    });
+    try {
+      const loaded = await loadFixture(path);
+      if (loaded.kind !== "fixture") throw new Error("expected an HTTP fixture");
+      assert.deepEqual(loaded.when.request.headers?.authorization, authorization);
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   }
 });
 
@@ -150,6 +174,31 @@ test("accepts a valid structured clone", async () => {
   const { directory, path } = await writeTemporaryFixture(fixture);
   try {
     assert.deepEqual(await loadFixture(path), fixture);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("loads a frozen clone with its required receipt and optional notes", async () => {
+  const fixture = await fixtureFromRepository(FIXTURE_PATHS[0][0]);
+  const receipt: FixtureReceipt = {
+    implementation: "typescript-reference",
+    version: "0.5.0",
+    commit: "a".repeat(40),
+    date: "2026-09-01",
+  };
+  const { directory, path } = await writeTemporaryFixture(fixture, (copy) => {
+    copy.status = "frozen";
+    copy.receipt = receipt;
+    copy.notes = "frozen receipt test";
+  });
+  try {
+    const loaded = await loadFixture(path);
+    assert.equal(loaded.notes, "frozen receipt test");
+    assert.equal(loaded.status, "frozen");
+    if (loaded.status !== "frozen") assert.fail("fixture did not retain frozen status");
+    assert.equal(loaded.receipt.implementation, receipt.implementation);
+    assert.equal(loaded.receipt.commit, receipt.commit);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

@@ -1,6 +1,6 @@
 export type AdapterKind = "fastify" | "express" | "hono";
 type HeaderOccurrence = string | CaptureReference;
-export type HeaderValue = HeaderOccurrence | [HeaderOccurrence, HeaderOccurrence, ...HeaderOccurrence[]];
+export type HeaderValue = HeaderOccurrence | HeaderOccurrence[];
 export type HeaderMap = Record<string, HeaderValue>;
 export type BodyValue = { absent: true } | { value: unknown };
 export type Matcher = string | { absent: true } | { equals: unknown } | { matches: string }
@@ -101,18 +101,26 @@ export interface OutboundCall {
   method: string; url: string; headers: Record<string, Exclude<Matcher, { absent: true }>>; body: Matcher;
 }
 
-interface FixtureBase {
-  id: string; kind: "fixture" | "boot"; profile: "portable" | "host";
+export interface FixtureReceipt {
+  implementation: string; version: string; commit: string; date: string;
+}
+
+interface FixtureBaseFields {
+  id: string; profile: "portable" | "host";
   contract: { section: string; clause: string; quote: string };
-  status: "draft" | "frozen" | "superseded"; supersededBy?: string;
-  chain?: { id: string; step: number; previous?: string };
+  notes?: string; chain?: { id: string; step: number; previous?: string };
 }
-export interface HttpFixture extends FixtureBase {
+interface DraftStatus { status: "draft"; supersededBy?: string; receipt?: FixtureReceipt }
+interface FrozenStatus { status: "frozen"; supersededBy?: string; receipt: FixtureReceipt }
+interface SupersededStatus { status: "superseded"; supersededBy: string; receipt?: FixtureReceipt }
+
+type WithFixtureStatus<T> = (T & DraftStatus) | (T & FrozenStatus) | (T & SupersededStatus);
+type HttpFixtureFields = {
   kind: "fixture"; given: FixtureGiven; when: { request: RequestSpec }; then: HttpThen;
-}
-export interface BootFixture extends FixtureBase {
-  kind: "boot"; given: BootGiven; then: BootThen;
-}
+};
+type BootFixtureFields = { kind: "boot"; given: BootGiven; then: BootThen };
+export type HttpFixture = WithFixtureStatus<FixtureBaseFields & HttpFixtureFields>;
+export type BootFixture = WithFixtureStatus<FixtureBaseFields & BootFixtureFields>;
 export type ParityFixture = HttpFixture | BootFixture;
 
 export interface ObservedMessage {
