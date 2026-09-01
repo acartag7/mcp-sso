@@ -26,7 +26,36 @@ export async function loadCorpus(root = FIXTURES_ROOT): Promise<ParityFixture[]>
     validateFixtureIdentity(fixture, expectedId, path);
     fixtures.push(fixture);
   }
+  validateSupersededFixtures(fixtures);
   return fixtures;
+}
+
+function validateSupersededFixtures(fixtures: ParityFixture[]): void {
+  const byId = new Map(fixtures.map((fixture) => [fixture.id, fixture]));
+  for (const fixture of fixtures) {
+    if (fixture.status !== "superseded") continue;
+    const replacement = fixture.supersededBy ? byId.get(fixture.supersededBy) : undefined;
+    if (!replacement) {
+      throw new FixtureRunnerError(`${fixture.id}: supersededBy must name a loaded fixture`);
+    }
+    if (replacement === fixture) {
+      throw new FixtureRunnerError(`${fixture.id}: supersededBy must name a different fixture`);
+    }
+  }
+  for (const fixture of fixtures) {
+    if (fixture.status !== "superseded") continue;
+    const seen = new Set<string>();
+    let currentId = fixture.id;
+    while (true) {
+      const current = byId.get(currentId);
+      if (current?.status !== "superseded") break;
+      if (seen.has(current.id)) {
+        throw new FixtureRunnerError(`${fixture.id}: supersededBy chain contains a cycle`);
+      }
+      seen.add(current.id);
+      currentId = current.supersededBy;
+    }
+  }
 }
 
 function validateFixtureIdentity(fixture: ParityFixture, expectedId: string, label: string): void {
