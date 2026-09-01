@@ -142,3 +142,5 @@ type BootFixtureFields = { kind: "boot"; given: BootGiven; then: BootThen };
 export type HttpFixture = WithFixtureStatus<FixtureBaseFields & HttpFixtureFields>;
 export type BootFixture = WithFixtureStatus<FixtureBaseFields & BootFixtureFields>;
 export type ParityFixture = HttpFixture | BootFixture;
+
+export type AdapterKind = "fastify" | "express" | "hono";
