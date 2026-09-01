@@ -99,9 +99,11 @@ export interface AuditEvent {
   subject?: string; resource?: string; scopes?: string[]; redirectHost?: string;
   reason?: string; ip?: string; selectedClientAuthMethod?: "none";
 }
+export type StateSelector = {
+  [K in keyof LogicalState]-?: { kind: K; where: Partial<NonNullable<LogicalState[K]>[number]> };
+}[keyof LogicalState];
 export interface StateAssertion {
-  mode: "exact" | "contains"; rows: LogicalState;
-  absent: Array<{ kind: keyof LogicalState; where: Record<string, unknown> }>;
+  mode: "exact" | "contains"; rows: LogicalState; absent: StateSelector[];
 }
 export interface CaptureSpec {
   name: string;
