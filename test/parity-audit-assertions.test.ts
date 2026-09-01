@@ -33,6 +33,12 @@ test("RecordingAudit keeps chronological structured snapshots", async () => {
     status: first.status,
     clientId: first.clientId,
     scopes: ["mcp:read"],
+    subject: undefined,
+    resource: undefined,
+    redirectHost: undefined,
+    reason: undefined,
+    ip: undefined,
+    selectedClientAuthMethod: undefined,
   });
   const audit = new RecordingAudit();
 
@@ -52,6 +58,7 @@ test("RecordingAudit keeps chronological structured snapshots", async () => {
     second,
   ]);
   assert.equal(Object.hasOwn(audit.events[0]!, "reason"), false);
+  assert.equal(Object.values(audit.events[0]!).includes(undefined), false);
   assert.notStrictEqual(audit.events[0], inherited);
   assert.notStrictEqual(audit.events[0]!.scopes, inherited.scopes);
 });
