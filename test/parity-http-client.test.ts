@@ -200,6 +200,21 @@ test("a server that never answers is rejected within the configured timeout",
   assert.ok(elapsed < 3000, `timeout took ${elapsed} ms`);
 });
 
+test("an IPv6 loopback base reaches the mounted server without DNS resolution", async (t) => {
+  const server = createServer((_incoming, response) => {
+    response.writeHead(200, { "content-type": "text/plain" });
+    response.end("v6");
+  });
+  await new Promise<void>((resolve) => { server.listen(0, "::1", resolve); });
+  t.after(() => { server.closeAllConnections(); return new Promise<void>((resolve) => { server.close(() => { resolve(); }); }); });
+  const { port } = server.address() as AddressInfo;
+  const observed = await sendRealHttp({
+    base: `http://[::1]:${port}`, method: "GET", path: "/v6", timeoutMs: 2000, headers: [],
+  });
+  assert.equal(observed.status, 200);
+  assert.equal(observed.body.toString("utf8"), "v6");
+});
+
 test("a materialized fixture request composes into the client input", async (t) => {
   const mounted = await mount((_recorded, response) => {
     response.writeHead(200, { "content-type": "application/json" });

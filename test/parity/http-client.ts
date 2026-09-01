@@ -73,7 +73,7 @@ function composeHeaders(input: RealHttpRequest, base: URL): string[] {
 function open(input: RealHttpRequest, base: URL, headers: string[]): ClientRequest {
   try {
     return httpRequest({
-      host: base.hostname,
+      host: socketHostname(base),
       port: base.port === "" ? 80 : Number(base.port),
       path: input.path,
       method: input.method,
@@ -81,6 +81,13 @@ function open(input: RealHttpRequest, base: URL, headers: string[]): ClientReque
       agent: false,
     });
   } catch (cause) { throw new FixtureRunnerError(UNBUILDABLE, { cause }); }
+}
+
+/** `URL.hostname` keeps the brackets of an IPv6 literal, which `http.request`
+ *  would treat as a DNS name; the socket wants the bare address. */
+function socketHostname(base: URL): string {
+  const bracketed = /^\[(.*)\]$/u.exec(base.hostname);
+  return bracketed ? bracketed[1]! : base.hostname;
 }
 
 function observe(
