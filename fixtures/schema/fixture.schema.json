@@ -763,6 +763,7 @@
         },
         {
           "type": "array",
+          "minItems": 2,
           "items": {
             "oneOf": [
               { "type": "string" },

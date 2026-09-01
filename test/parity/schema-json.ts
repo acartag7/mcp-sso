@@ -80,24 +80,5 @@ export async function loadFixture(path: string): Promise<ParityFixture> {
     const detail = ajv.errorsText(validate.errors, { separator: "; ", dataVar: "fixture" });
     throw new FixtureRunnerError(`${path}: schema validation failed: ${detail}`);
   }
-  const fixture = raw as ParityFixture;
-  validateHeaderMaps(fixture);
-  return fixture;
-}
-
-function validateHeaderMaps(fixture: ParityFixture): void {
-  for (const [index, exchange] of fixture.given.http.entries()) {
-    validateHeaderMap(exchange.response.headers, `${fixture.id} HTTP response ${index + 1}`);
-  }
-  if (fixture.kind !== "fixture") return;
-  validateHeaderMap(fixture.when.request.headers, `${fixture.id} inbound request`);
-  validateHeaderMap(fixture.given.protectedResource.success?.headers, `${fixture.id} protected response`);
-}
-
-function validateHeaderMap(headers: Record<string, unknown> | undefined, label: string): void {
-  for (const [name, value] of Object.entries(headers ?? {})) {
-    if (Array.isArray(value) && value.length < 2) {
-      throw new FixtureRunnerError(`${label} header ${name} must use a string for one occurrence or an array for multiple occurrences`);
-    }
-  }
+  return raw as ParityFixture;
 }

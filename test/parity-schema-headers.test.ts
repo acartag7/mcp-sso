@@ -13,7 +13,6 @@ const HTTP_PATH = resolve(PROJECT_ROOT, "fixtures/08-resource-server-verifier/8.
 const BOOT_PATH = resolve(PROJECT_ROOT, "fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json");
 const INVALID_VALUES = [[], ["one"]] as string[][];
 const VALID_VALUES: Array<string | string[]> = ["one", ["one", "two"]];
-const OCCURRENCE_MESSAGE = "must use a string for one occurrence or an array for multiple occurrences";
 
 function asHttp(fixture: ParityFixture): HttpFixture {
   if (fixture.kind !== "fixture") throw new Error("expected HTTP fixture");
@@ -64,9 +63,10 @@ async function captureError(run: () => Promise<unknown>): Promise<unknown> {
   return undefined;
 }
 
-function assertHeaderError(caught: unknown, message: string): void {
+function assertSchemaHeaderError(caught: unknown, path: string): void {
   assert.ok(caught instanceof FixtureRunnerError);
-  assert.equal(caught.message, message);
+  assert.match(caught.message, /schema validation failed/u);
+  assert.match(caught.message, new RegExp(`${path} must NOT have fewer than 2 items`, "u"));
 }
 
 function scriptedExchange(value: string | string[], headers: Record<string, Matcher> = {}): HttpExchange {
@@ -77,35 +77,31 @@ function scriptedExchange(value: string | string[], headers: Record<string, Matc
 }
 
 test("rejects empty and one-occurrence inbound request headers", async () => {
-  const fixtureId = (await loadFixture(HTTP_PATH)).id;
   const errors = await Promise.all(INVALID_VALUES.map((value) => captureError(
       () => loadHttp((fixture) => { fixture.when.request.headers = { authorization: value }; }),
   )));
-  for (const error of errors) assertHeaderError(error, `${fixtureId} inbound request header authorization ${OCCURRENCE_MESSAGE}`);
+  for (const error of errors) assertSchemaHeaderError(error, "fixture/when/request/headers/authorization");
 });
 
 test("rejects empty and one-occurrence scripted response headers for HTTP fixtures", async () => {
-  const fixtureId = (await loadFixture(HTTP_PATH)).id;
   const errors = await Promise.all(INVALID_VALUES.map((value) => captureError(
       () => loadHttp((fixture) => { fixture.given.http = [scriptedExchange(value)]; }),
   )));
-  for (const error of errors) assertHeaderError(error, `${fixtureId} HTTP response 1 header x-scripted ${OCCURRENCE_MESSAGE}`);
+  for (const error of errors) assertSchemaHeaderError(error, "fixture/given/http/0/response/headers/x-scripted");
 });
 
 test("rejects empty and one-occurrence scripted response headers for boot fixtures", async () => {
-  const fixtureId = (await loadFixture(BOOT_PATH)).id;
   const errors = await Promise.all(INVALID_VALUES.map((value) => captureError(
       () => loadBoot((fixture) => { fixture.given.http = [scriptedExchange(value)]; }),
   )));
-  for (const error of errors) assertHeaderError(error, `${fixtureId} HTTP response 1 header x-scripted ${OCCURRENCE_MESSAGE}`);
+  for (const error of errors) assertSchemaHeaderError(error, "fixture/given/http/0/response/headers/x-scripted");
 });
 
 test("rejects empty and one-occurrence protected-resource success headers", async () => {
-  const fixtureId = (await loadFixture(HTTP_PATH)).id;
   const errors = await Promise.all(INVALID_VALUES.map((value) => captureError(
       () => loadHttp((fixture) => { fixture.given.protectedResource.success!.headers = { "x-protected": value }; }),
   )));
-  for (const error of errors) assertHeaderError(error, `${fixtureId} protected response header x-protected ${OCCURRENCE_MESSAGE}`);
+  for (const error of errors) assertSchemaHeaderError(error, "fixture/given/protectedResource/success/headers/x-protected");
 });
 
 test("accepts scalar and two-occurrence values in each wire header map", async () => {
