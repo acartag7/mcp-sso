@@ -773,6 +773,21 @@
         }
       ]
     },
+    "responseHeaderValue": {
+      "description": "A response header is literal: a string is one occurrence; an array is distinct occurrences on the wire, never joined",
+      "oneOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
     "headerName": {
       "type": "string",
       "description": "Lowercase HTTP field name",
@@ -935,7 +950,7 @@
                 "$ref": "#/$defs/headerName"
               },
               "additionalProperties": {
-                "$ref": "#/$defs/headerValue"
+                "$ref": "#/$defs/responseHeaderValue"
               }
             },
             "body": {
@@ -1097,7 +1112,7 @@
               "propertyNames": {
                 "$ref": "#/$defs/headerName"
               },
-              "additionalProperties": { "$ref": "#/$defs/headerValue" }
+              "additionalProperties": { "$ref": "#/$defs/responseHeaderValue" }
             },
             "body": { "$ref": "#/$defs/bodyValue" }
           }
