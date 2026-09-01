@@ -14,7 +14,9 @@ const require = createRequire(import.meta.url);
 const Ajv2020 = (require("ajv/dist/2020.js") as { default: typeof Ajv2020Class }).default;
 const addFormats = (require("ajv-formats") as { default: FormatsPlugin }).default;
 const ajv = createAjv();
+let schemaDocument: Promise<Record<string, unknown>> | undefined;
 let fixtureValidator: Promise<ValidateFunction> | undefined;
+let stateValidator: Promise<ValidateFunction> | undefined;
 
 export function compileJsonSchema(schema: Record<string, unknown>): ValidateFunction {
   return createAjv().compile(schema);
@@ -26,19 +28,47 @@ function createAjv(): InstanceType<typeof Ajv2020Class> {
   return instance;
 }
 
-function fixedSchemaValidator(): Promise<ValidateFunction> {
-  fixtureValidator ??= readFile(SCHEMA_PATH, "utf8").then((source) => {
+function fixedSchemaDocument(): Promise<Record<string, unknown>> {
+  schemaDocument ??= readFile(SCHEMA_PATH, "utf8").then((source) => {
     try {
       const schema = parseStrictJson(source);
       if (schema === null || typeof schema !== "object" || Array.isArray(schema)) {
         throw new SyntaxError("invalid JSON");
       }
-      return ajv.compile(schema as Record<string, unknown>);
+      return schema as Record<string, unknown>;
     } catch (error) {
       throw new FixtureRunnerError(`${SCHEMA_PATH}: invalid JSON`, { cause: error });
     }
   });
+  return schemaDocument;
+}
+
+function compileFixedSchema(
+  select: (schema: Record<string, unknown>) => Record<string, unknown>,
+): Promise<ValidateFunction> {
+  return fixedSchemaDocument().then((schema) => {
+    try {
+      return ajv.compile(select(schema));
+    } catch (error) {
+      throw new FixtureRunnerError(`${SCHEMA_PATH}: invalid JSON`, { cause: error });
+    }
+  });
+}
+
+function fixedSchemaValidator(): Promise<ValidateFunction> {
+  fixtureValidator ??= compileFixedSchema((schema) => schema);
   return fixtureValidator;
+}
+
+export async function logicalStateValidator(): Promise<ValidateFunction> {
+  stateValidator ??= compileFixedSchema((schema) => ({
+    $ref: "#/$defs/logicalState", $defs: schema["$defs"],
+  }));
+  return stateValidator;
+}
+
+export function schemaErrorsText(errors: ValidateFunction["errors"], dataVar: string): string {
+  return ajv.errorsText(errors, { separator: "; ", dataVar });
 }
 
 export async function loadFixture(path: string): Promise<ParityFixture> {
