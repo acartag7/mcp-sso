@@ -50,18 +50,10 @@ function refreshRow(tokenHash: string, extra: RefreshFields): RefreshTokenRow {
 }
 
 function codeA(extra: CodeFields = {}): AuthorizationCodeRow { return codeRow(CODE_A, extra); }
-function codeB(extra: CodeFields = {}): AuthorizationCodeRow {
-  return codeRow(CODE_B, { subject: "user-9033", ...extra });
-}
-function refreshA(extra: RefreshFields = {}): RefreshTokenRow {
-  return refreshRow(REFRESH_A, { consumed_at: CONSUMED_AT, ...extra });
-}
-function refreshB(extra: RefreshFields = {}): RefreshTokenRow {
-  return refreshRow(REFRESH_B, { previous_token_hash: REFRESH_A, ...extra });
-}
-function jtiRow(jti: string, expiresAt: string = CODE_EXPIRES_AT): ConsentJtiRow {
-  return { jti, expires_at: expiresAt };
-}
+function codeB(extra: CodeFields = {}): AuthorizationCodeRow { return codeRow(CODE_B, { subject: "user-9033", ...extra }); }
+function refreshA(extra: RefreshFields = {}): RefreshTokenRow { return refreshRow(REFRESH_A, { consumed_at: CONSUMED_AT, ...extra }); }
+function refreshB(extra: RefreshFields = {}): RefreshTokenRow { return refreshRow(REFRESH_B, { previous_token_hash: REFRESH_A, ...extra }); }
+function jtiRow(jti: string, expiresAt: string = CODE_EXPIRES_AT): ConsentJtiRow { return { jti, expires_at: expiresAt }; }
 function clientRow(applicationType: "native" | "web" = "native"): ClientRegistrationRow {
   return {
     client_id: CLIENT_ID, redirect_uris: [REDIRECT_URI, SECOND_REDIRECT_URI],
@@ -92,9 +84,7 @@ function withoutKind(kind: keyof LogicalState): LogicalState {
   return rows;
 }
 
-function assertion(
-  rows: LogicalState, mode: StateAssertion["mode"] = "exact", absent: StateAssertion["absent"] = [],
-): StateAssertion {
+function assertion(rows: LogicalState, mode: StateAssertion["mode"] = "exact", absent: StateAssertion["absent"] = []): StateAssertion {
   return { mode, rows, absent };
 }
 
@@ -164,9 +154,9 @@ test("a duplicate primary key in the expected rows is a runner error in both mod
     );
     assert.throws(
       () => assertState(snapshot(), assertion({
-        store_instance: [{ instance_id: INSTANCE_ID }, { instance_id: INSTANCE_ID }],
+        revoked_family: [...snapshot().revoked_family, ...snapshot().revoked_family],
       }, mode), "fixture"),
-      /fixture expected state has duplicate store_instance primary key/, mode,
+      /fixture expected state has duplicate revoked_family primary key/, mode,
     );
   }
 });
@@ -235,4 +225,23 @@ test("normalization leaves the caller's arrays and rows untouched", () => {
 
   assert.deepStrictEqual(observed, observedBefore);
   assert.deepStrictEqual(expectedRows, expectedBefore);
+});
+
+test("an unknown record kind or a second store_instance row is a runner error on either side", () => {
+  const twoInstances = [{ instance_id: INSTANCE_ID }, { instance_id: "7Qk2mZr9Tv1XbN4sLd6Hpf" }];
+  const unknownKind = { ...snapshot(), machine_client: [] } as unknown as Required<LogicalState>;
+  for (const mode of MODES) {
+    assert.throws(
+      () => assertState(snapshotWith({ store_instance: twoInstances }), assertion({}, mode), "fixture"),
+      (error: unknown) => error instanceof FixtureRunnerError
+        && /fixture observed state has 2 store_instance rows/.test(error.message),
+      mode,
+    );
+    assert.throws(() => assertState(snapshot(), assertion({ store_instance: twoInstances }, mode), "fixture"),
+      /fixture expected state has 2 store_instance rows/, mode);
+    assert.throws(() => assertState(unknownKind, assertion({}, mode), "fixture"),
+      /fixture observed state has unknown record kind machine_client/, mode);
+    assert.throws(() => assertState(snapshot(), assertion(unknownKind, mode), "fixture"),
+      /fixture expected state has unknown record kind machine_client/, mode);
+  }
 });

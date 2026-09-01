@@ -45,10 +45,18 @@ function assertContains(actual: NormalizedState, wanted: NormalizedState, label:
 }
 
 function normalized(state: LogicalState, label: string): NormalizedState {
+  for (const kind of Object.keys(state)) {
+    if (!Object.hasOwn(PRIMARY_KEYS, kind)) {
+      throw new FixtureRunnerError(`${label} has unknown record kind ${kind}`);
+    }
+  }
   const result = {} as NormalizedState;
   for (const kind of KINDS) {
     const key = PRIMARY_KEYS[kind];
     const rows: ReadonlyArray<object> = state[kind] ?? [];
+    if (kind === "store_instance" && rows.length > 1) {
+      throw new FixtureRunnerError(`${label} has ${rows.length} store_instance rows`);
+    }
     const seen = new Set<string>();
     for (const row of rows) {
       const primary = primaryValue(row, key);
