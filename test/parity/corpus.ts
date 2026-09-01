@@ -41,6 +41,7 @@ function validateChainTopology(fixtures: ParityFixture[]): void {
   }
   for (const [chainId, members] of chains) {
     const ordered = members.toSorted((a, b) => a.chain!.step - b.chain!.step);
+    const captureNames = new Set<string>();
     for (let index = 0; index < ordered.length; index += 1) {
       const fixture = ordered[index]!;
       if (fixture.chain!.step !== index + 1) {
@@ -49,6 +50,13 @@ function validateChainTopology(fixtures: ParityFixture[]): void {
       const expected = index === 0 ? undefined : ordered[index - 1]!.id;
       if (fixture.chain!.previous !== expected) {
         throw new FixtureRunnerError(`${fixture.id}: wrong chain predecessor`);
+      }
+      if (fixture.kind !== "fixture") continue;
+      for (const capture of fixture.then.captures ?? []) {
+        if (captureNames.has(capture.name)) {
+          throw new FixtureRunnerError(`${chainId}: duplicate capture name ${capture.name}`);
+        }
+        captureNames.add(capture.name);
       }
     }
   }
