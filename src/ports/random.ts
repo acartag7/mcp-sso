@@ -1,5 +1,9 @@
 import { randomBytes } from "node:crypto";
 
+const typedArrayByteLength = Object.getOwnPropertyDescriptor(
+  Object.getPrototypeOf(Uint8Array.prototype) as object, "byteLength",
+)?.get as (this: Uint8Array) => number;
+
 /** Byte-oriented entropy seam used by fixture runs. Production uses Node CSPRNG. */
 export interface RandomPort {
   bytes(length: number): Uint8Array;
@@ -17,8 +21,19 @@ export function randomBytesFrom(random: RandomPort, length: number): Buffer {
     throw new RangeError("random byte length must be a positive safe integer");
   }
   const value = random.bytes(length);
-  if (!(value instanceof Uint8Array) || value.byteLength !== length) {
+  if (!(value instanceof Uint8Array)) {
     throw new TypeError("RandomPort returned the wrong byte count");
   }
-  return Buffer.from(value);
+  try {
+    if (typedArrayByteLength.call(value) !== length) {
+      throw new TypeError("RandomPort returned the wrong byte count");
+    }
+    const snapshot = Buffer.from(value);
+    if (snapshot.byteLength !== length) {
+      throw new TypeError("RandomPort returned the wrong byte count");
+    }
+    return snapshot;
+  } catch {
+    throw new TypeError("RandomPort returned the wrong byte count");
+  }
 }

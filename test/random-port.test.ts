@@ -29,6 +29,26 @@ test("randomBytesFrom rejects non-Uint8Array, short, and long results", () => {
   assert.throws(() => randomBytesFrom({
     bytes: () => new Uint8Array(5),
   }, 4), { name: "TypeError", message: "RandomPort returned the wrong byte count" });
+
+  const disguisedShort = new Uint8Array(3);
+  Object.defineProperties(disguisedShort, {
+    byteLength: { value: 4 },
+    length: { value: 4 },
+  });
+  assert.throws(() => randomBytesFrom({ bytes: () => disguisedShort }, 4), {
+    name: "TypeError", message: "RandomPort returned the wrong byte count",
+  });
+
+  const paddedSnapshot = new Uint8Array(3);
+  Object.defineProperty(paddedSnapshot, "length", { value: 4 });
+  assert.throws(() => randomBytesFrom({ bytes: () => paddedSnapshot }, 3), {
+    name: "TypeError", message: "RandomPort returned the wrong byte count",
+  });
+
+  const proxy = new Proxy(new Uint8Array(4), {});
+  assert.throws(() => randomBytesFrom({ bytes: () => proxy }, 4), {
+    name: "TypeError", message: "RandomPort returned the wrong byte count",
+  });
 });
 
 test("randomBytesFrom snapshots the port-owned bytes", () => {
