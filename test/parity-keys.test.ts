@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, open, rm, symlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { FIXTURES_ROOT } from "./parity/corpus.ts";
 import { FixtureRunnerError } from "./parity/error.ts";
-import { privateJwk, publicKey } from "./parity/keys.ts";
+import { privateJwk, publicKey, validateOpenedFile } from "./parity/keys.ts";
 
 const loaders: Array<(name: unknown, root: string) => Promise<unknown>> = [privateJwk, publicKey];
 
@@ -42,6 +42,31 @@ test("materializes valid ES256 private and public keys", async () => withKeys(as
   const key = await publicKey("keys/public.pem", root);
   assert.equal(key.type, "public");
   assert.equal(key.algorithm.name, "ECDSA");
+}));
+
+test("rejects an opened descriptor with a different file identity", async () => withKeys(async (root) => {
+  const privatePath = join(root, "keys", "private.pem");
+  const publicPath = join(root, "keys", "public.pem");
+  const expected = await lstat(privatePath, { bigint: true });
+  const handle = await open(publicPath, "r");
+  try {
+    await expectRunnerError(
+      () => validateOpenedFile(handle, "keys/public.pem", expected),
+      /changed between validation and open/,
+    );
+    await expectRunnerError(
+      () => validateOpenedFile(handle, "keys/public.pem", { dev: 0n, ino: 0n }),
+      /changed between validation and open/,
+    );
+  } finally {
+    await handle.close();
+  }
+  const sameFile = await open(privatePath, "r");
+  try {
+    await assert.doesNotReject(() => validateOpenedFile(sameFile, "keys/private.pem", expected));
+  } finally {
+    await sameFile.close();
+  }
 }));
 
 test("rejects invalid key path values and spelling", async () => withKeys(async (root) => {
