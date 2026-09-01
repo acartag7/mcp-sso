@@ -8,8 +8,7 @@ import { test } from "node:test";
 import { promisify } from "node:util";
 import { FixtureRunnerError } from "./parity/error.ts";
 import { loadFixture, compileJsonSchema } from "./parity/schema-json.ts";
-import type { FixtureGiven, FixtureReceipt, HeaderValue, ParityFixture } from "./parity/types.ts";
-
+import type { BootGiven, FixtureGiven, FixtureReceipt, HeaderValue, ParityFixture } from "./parity/types.ts";
 const PROJECT_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const execFileAsync = promisify(execFile);
 const HTTP_KEYS_WITHOUT_PUBLIC: FixtureGiven["keys"] = { signingPrivate: "keys/signing-private.pem" };
@@ -17,10 +16,11 @@ const FIXTURE_PATHS = [
   ["fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable.json", "portable"],
   ["fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json", "host"],
 ] as const;
-
 type Assert<T extends true> = T;
 type FrozenReceiptIsRequired = Extract<ParityFixture, { status: "frozen" }> extends { receipt: FixtureReceipt } ? true : false;
 type _FrozenReceiptRequirement = Assert<FrozenReceiptIsRequired>;
+type _SupersededByRequirement = Assert<Extract<ParityFixture, { status: "superseded" }> extends { supersededBy: string } ? true : false>;
+const _bootConfigValues: BootGiven["config"][] = [null, false, "literal", ["literal"]];
 async function fixtureFromRepository(path: string): Promise<ParityFixture> {
   return loadFixture(resolve(PROJECT_ROOT, path));
 }
@@ -36,7 +36,6 @@ async function writeTemporaryFixture(
   await writeFile(path, JSON.stringify(copy), "utf8");
   return { directory, path };
 }
-
 async function expectFixtureError(path: string, message: RegExp): Promise<FixtureRunnerError> {
   let caught: unknown;
   try {
@@ -144,7 +143,8 @@ test("fixed schema rejects a wrong root field type", async () => {
 test("fixed schema rejects an invalid URI in configuration", async () => {
   const fixture = await fixtureFromRepository(FIXTURE_PATHS[0][0]);
   const { directory, path } = await writeTemporaryFixture(fixture, (copy) => {
-    copy.given.config.issuer = "http://[invalid";
+    if (copy.kind !== "fixture" || copy.given.config === null || typeof copy.given.config !== "object" || Array.isArray(copy.given.config)) throw new Error("expected an object fixture config");
+    Object.assign(copy.given.config, { issuer: "http://[invalid" });
   });
   try {
     await expectFixtureError(path, /schema validation failed/);

@@ -50,8 +50,8 @@ export interface FixtureGiven {
   http: HttpExchange[]; identity: { checks: IdentityCheck[] };
   rateLimit: { checks: RateLimitCheck[] }; protectedResource: ProtectedResource;
 }
-export interface BootGiven extends Omit<FixtureGiven, "keys" | "protectedResource"> {
-  entrypoint: "createBridgeConfig" | "Bridge";
+export interface BootGiven extends Omit<FixtureGiven, "keys" | "protectedResource" | "config"> {
+  config: unknown; entrypoint: "createBridgeConfig" | "Bridge";
   keys: { signingPrivate?: string; signingPublic?: string };
 }
 export interface ProtectedResource {
