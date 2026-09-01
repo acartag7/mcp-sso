@@ -1,8 +1,10 @@
 import { lstat, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import type { Dirent } from "node:fs";
 import { FixtureRunnerError } from "./error.ts";
+import { loadFixture } from "./schema-json.ts";
+import type { ParityFixture } from "./types.ts";
 
 const PROJECT_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const FIXTURES_ROOT = resolve(PROJECT_ROOT, "fixtures");
@@ -13,6 +15,36 @@ const SECTION_DIRECTORY = /^(0[1-9]|1[0-9])-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 export async function fixturePaths(root = FIXTURES_ROOT): Promise<string[]> {
   const corpusRoot = resolve(root);
   return fixturePathsAt(corpusRoot);
+}
+
+export async function loadCorpus(root = FIXTURES_ROOT): Promise<ParityFixture[]> {
+  const corpusRoot = resolve(root);
+  const fixtures: ParityFixture[] = [];
+  for (const path of await fixturePaths(corpusRoot)) {
+    const fixture = await loadFixture(path);
+    const expectedId = relative(corpusRoot, path).split(sep).join("/").replace(/\.json$/u, "");
+    validateFixtureIdentity(fixture, expectedId, path);
+    fixtures.push(fixture);
+  }
+  return fixtures;
+}
+
+function validateFixtureIdentity(fixture: ParityFixture, expectedId: string, label: string): void {
+  if (fixture.id !== expectedId) {
+    throw new FixtureRunnerError(`${label}: id ${fixture.id} does not match path ${expectedId}`);
+  }
+  const [directory, filename] = expectedId.split("/");
+  const section = directory?.slice(0, directory.indexOf("-"));
+  const clause = filename?.slice(0, filename.indexOf("-"));
+  if (section !== fixture.contract.section) {
+    throw new FixtureRunnerError(`${label}: id section ${section} does not match contract section ${fixture.contract.section}`);
+  }
+  if (clause !== fixture.contract.clause) {
+    throw new FixtureRunnerError(`${label}: id clause ${clause} does not match contract clause ${fixture.contract.clause}`);
+  }
+  if (Number(clause?.split(".", 1)[0]) !== Number(section)) {
+    throw new FixtureRunnerError(`${label}: contract clause ${clause} does not belong to section ${section}`);
+  }
 }
 
 async function fixturePathsAt(root: string): Promise<string[]> {
