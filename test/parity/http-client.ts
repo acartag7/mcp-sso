@@ -12,6 +12,10 @@ export interface RealHttpRequest {
 }
 
 const DEFAULT_TIMEOUT_MS = 5000;
+/** The fixture contract bounds one wire header map at 65536 UTF-8 bytes; the
+ *  parser ceiling is the smallest power of two above it, so no schema-valid
+ *  fixture is rejected for size and no unbounded block reaches the parser. */
+const MAX_HEADER_BYTES = 131072;
 const HTTP_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/u;
 const CR_OR_LF = /[\r\n]/u;
 
@@ -77,6 +81,7 @@ function open(input: RealHttpRequest, base: URL, headers: string[]): ClientReque
       method: input.method,
       headers,
       agent: false,
+      maxHeaderSize: MAX_HEADER_BYTES,
     });
   } catch (cause) { throw new FixtureRunnerError(UNBUILDABLE, { cause }); }
 }
