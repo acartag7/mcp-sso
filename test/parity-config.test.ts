@@ -61,10 +61,13 @@ test("an inherited signingPrivateJwk is not an own conflict after cloning", asyn
 
 test("a named valid public key is accepted without injection", async () => {
   const literal = { issuer: "https://issuer.example" };
-  const materialized = await materializeConfigInput(literal, { signingPublic: publicKeyName });
+  const materialized = await materializeConfigInput(literal, {
+    signingPrivate: privateKeyName, signingPublic: publicKeyName,
+  });
+  const expected = await privateJwk(privateKeyName);
 
   assert.notStrictEqual(materialized, literal);
-  assert.deepEqual(materialized, literal);
+  assert.deepEqual(materialized, { ...literal, signingPrivateJwk: expected });
   assert.equal(Object.hasOwn(materialized as object, "signingPublicJwk"), false);
 });
 
@@ -84,6 +87,21 @@ test("a named missing public key rejects before anything uses it", async () => {
     (error: unknown) => error instanceof FixtureRunnerError
       && error.message.includes("fixture key cannot be inspected"),
   );
+});
+
+test("a missing public key rejects before private materialization", async () => {
+  const literal = { issuer: "https://issuer.example" };
+  const expectedLiteral = { ...literal };
+  await assert.rejects(
+    materializeConfigInput(literal, {
+      signingPrivate: privateKeyName,
+      signingPublic: publicKeyName.replace("signing-public.pem", "missing.pem"),
+    }),
+    (error: unknown) => error instanceof FixtureRunnerError
+      && error.message.includes("fixture key cannot be inspected"),
+  );
+  assert.deepEqual(literal, expectedLiteral);
+  assert.equal(Object.hasOwn(literal, "signingPrivateJwk"), false);
 });
 
 test("a named symlinked public key rejects before anything uses it", async () => {
