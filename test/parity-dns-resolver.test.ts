@@ -27,6 +27,21 @@ test("multiple declared HTTPS hostnames are admitted", async () => {
   assert.deepEqual(await resolver.resolve("second.example"), answer);
 });
 
+test("exact localhost resolves to the fixed loopback address", async () => {
+  const resolver = new ScriptedDnsResolver([exchange("https://localhost/client.json")]);
+  assert.deepEqual(await resolver.resolve("localhost"), [{ address: "127.0.0.1", family: 4 }]);
+});
+
+test("a localhost subdomain resolves to the fixed loopback address", async () => {
+  const resolver = new ScriptedDnsResolver([exchange("https://client.localhost/client.json")]);
+  assert.deepEqual(await resolver.resolve("client.localhost"), [{ address: "127.0.0.1", family: 4 }]);
+});
+
+test("a localhost suffix near-miss resolves to the public address", async () => {
+  const resolver = new ScriptedDnsResolver([exchange("https://notlocalhost/client.json")]);
+  assert.deepEqual(await resolver.resolve("notlocalhost"), answer);
+});
+
 test("undeclared hostname fails without echoing the hostname", async () => {
   const hostname = "private.undeclared.example";
   await assert.rejects(
