@@ -27,6 +27,12 @@ importers:
       '@types/node':
         specifier: 24.13.2
         version: 24.13.2
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+      ajv-formats:
+        specifier: 3.0.1
+        version: 3.0.1(ajv@8.20.0)
       express:
         specifier: 5.2.1
         version: 5.2.1
@@ -39,6 +45,9 @@ importers:
       ioredis:
         specifier: 5.11.1
         version: 5.11.1
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
       mysql2:
         specifier: 3.22.5
         version: 3.22.5(@types/node@24.13.2)
@@ -395,6 +404,9 @@ packages:
 
   json-schema-typed@8.0.2:
     resolution: {integrity: sha512-fQhoXdcvc3V28x7C7BMs4P5+kNlgUURe2jmUT1T//oBRMDrqy1QPelJimwZGo7Hg9VPV3EQV5Bnq4hbFy2vetA==}
+
+  jsonc-parser@3.3.1:
+    resolution: {integrity: sha512-HUgH65KyejrUFPvHFPbqOY0rsFip3Bo5wb4ngvdi1EpCYWUQDC5V+Y7mZws+DLkr4M//zQJoanu1SP+87Dv1oQ==}
 
   light-my-request@6.6.0:
     resolution: {integrity: sha512-CHYbu8RtboSIoVsHZ6Ye4cj4Aw/yg2oAFimlF7mNvfDV192LR7nDiKtSIfCuLT7KokPSTn/9kfVLm5OGN0A28A==}
@@ -1078,6 +1090,8 @@ snapshots:
   json-schema-traverse@1.0.0: {}
 
   json-schema-typed@8.0.2: {}
+
+  jsonc-parser@3.3.1: {}
 
   light-my-request@6.6.0:
     dependencies:

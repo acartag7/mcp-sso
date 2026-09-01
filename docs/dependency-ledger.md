@@ -45,6 +45,9 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 |---|---|---|---|---|
 | [`typescript`](https://www.typescriptlang.org/) | `6.0.3` | 2026-04-16 | ✅ | Type-checking + the publish `tsc` build. |
 | [`@types/node`](https://www.npmjs.com/package/@types/node) | `24.13.2` | 2026-06-10 | ✅ | Node 24 typings. Matches the `engines.node >=24` target. |
+| [`ajv`](https://ajv.js.org/) | `8.20.0` | 2026-04-24 | ✅ | JSON Schema 2020-12 validation for parity fixtures and JSON body assertions. |
+| [`ajv-formats`](https://github.com/ajv-validator/ajv-formats) | `3.0.1` | 2024-03-30 | ✅ | Standard URI format validation used by the parity-fixture schema. |
+| [`jsonc-parser`](https://github.com/microsoft/node-jsonc-parser) | `3.3.1` | 2024-06-24 | ✅ | Strict parity-fixture JSON parsing with duplicate object-member detection before schema validation. |
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | ✅ | The official MCP SDK, used by end-to-end tests and every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dependency of the mcp-sso package itself. |
 | [`@fastify/rate-limit`](https://github.com/fastify/fastify-rate-limit) | `11.2.0` | 2026-07-29 | ✅ | Real fail-closed `/mcp` middleware for the Fastify examples, generated starter, and isolated helper subpath. Also an optional peer. Not loaded by the root/core entry. |
 | [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | ✅ | Reference framework adapter, dev/test + optional peer. |
@@ -137,10 +140,13 @@ The following block is the machine-readable source used by `check:deps`. The hum
     "@modelcontextprotocol/sdk": { "version": "1.29.0", "published": "2026-03-30T16:50:42.718Z" },
     "@types/express": { "version": "5.0.6", "published": "2025-12-01T20:35:51.488Z" },
     "@types/node": { "version": "24.13.2", "published": "2026-06-10T22:15:29.361Z" },
+    "ajv": { "version": "8.20.0", "published": "2026-04-24T15:22:16.529Z" },
+    "ajv-formats": { "version": "3.0.1", "published": "2024-03-30T11:30:26.728Z" },
     "express": { "version": "5.2.1", "published": "2025-12-01T20:49:43.268Z" },
     "fastify": { "version": "5.8.5", "published": "2026-04-14T12:07:12.232Z" },
     "hono": { "version": "4.12.34", "published": "2026-08-03T02:36:40.543Z" },
     "ioredis": { "version": "5.11.1", "published": "2026-06-04T10:14:59.752Z" },
+    "jsonc-parser": { "version": "3.3.1", "published": "2024-06-24T21:12:45.445Z" },
     "jose": { "version": "6.2.3", "published": "2026-04-27T15:23:35.019Z" },
     "mysql2": { "version": "3.22.5", "published": "2026-06-06T08:10:39.646Z" },
     "playwright-core": { "version": "1.62.1", "published": "2026-07-30T16:36:51.295Z" },
