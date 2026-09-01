@@ -3,6 +3,7 @@ import type { RedirectIdentityPort } from "../ports/identity.ts";
 import type { ClockPort } from "../ports/clock.ts";
 import type { RateLimitPort } from "../ports/rate-limit.ts";
 import type { CimdTransport, DnsResolver } from "../cimd/transport.ts";
+import type { RandomPort } from "../ports/random.ts";
 import { OAuthError } from "../errors.ts";
 import { pkceChallenge } from "../crypto.ts";
 import { queryString, noStoreHeaders, type NormRequest, type NormResponse } from "./http.ts";
@@ -17,9 +18,10 @@ export function createUpstreamAuthorizeHandler(args: {
   bridge: Bridge; identity: RedirectIdentityPort; clock: ClockPort; rateLimit: RateLimitPort;
   callbackPath: string; flowTtlSeconds: number; complete: "bridge" | "identity";
   cookieProfile: CookieProfile; guard(req: NormRequest, prefix: string): Promise<void>;
+  random?: RandomPort;
   cimdTransport?: CimdTransport; cimdResolver?: DnsResolver;
 }): (req: NormRequest) => Promise<NormResponse> {
-  const { bridge, identity, clock, rateLimit, callbackPath, flowTtlSeconds, complete, cookieProfile, guard } = args;
+  const { bridge, identity, clock, rateLimit, callbackPath, flowTtlSeconds, complete, cookieProfile, guard, random } = args;
   const secret = bridge.config.consentSigningSecret;
   const issuer = bridge.config.issuer;
   const cimd = bridge.cimd;
@@ -28,8 +30,8 @@ export function createUpstreamAuthorizeHandler(args: {
   return async (req) => {
     try {
       await guard(req, complete === "bridge" ? "upstream" : "website-login");
-      const state = randomFlowToken(), nonce = randomFlowToken(), codeVerifier = randomFlowToken();
-      const jti = `upf_${randomFlowToken()}`;
+      const state = randomFlowToken(random), nonce = randomFlowToken(random), codeVerifier = randomFlowToken(random);
+      const jti = `upf_${randomFlowToken(random)}`;
       if (complete === "identity") {
         const flowJwt = await signFlowToken({ secret, issuer, clock, callbackPath, complete, jti, state, nonce, codeVerifier, ttlSeconds: flowTtlSeconds });
         if (flowCookieOversized(cookieProfile, flowJwt, flowTtlSeconds)) return directErrorResponse("invalid_request", "request parameters too large");

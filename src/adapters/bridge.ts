@@ -26,8 +26,8 @@ import { formField, headerString, noStoreHeaders, oauthErrorResponse, queryStrin
   type NormRequest, type NormResponse,
 } from "./http.ts";
 import type { BridgeDeps } from "./bridge-deps.ts";
+import { systemRandom, type RandomPort } from "../ports/random.ts";
 export type { BridgeDeps } from "./bridge-deps.ts";
-
 // `referrer-policy: same-origin` preserves the scheme/host/port `Origin` on the
 // same-origin Approve POST, which the strict `assertApproveOrigin` gate needs.
 // `no-referrer` serialized that Origin as `null` in Chromium and broke browser
@@ -54,7 +54,7 @@ const CONSENT_HEADERS = noStoreHeaders({
 export class Bridge {
   readonly config: BridgeConfig;
   private readonly clock: ClockPort;
-  private readonly audit: AuditPort;
+  private readonly audit: AuditPort; private readonly random: RandomPort;
   private readonly auth: OAuthAuthorizationUseCase;
   private readonly token: OAuthTokenUseCase;
   private readonly rateLimit: RateLimitPort;
@@ -72,7 +72,7 @@ export class Bridge {
       config: deps.config,
       store: deps.store,
       clock: deps.clock,
-      audit: deps.audit,
+      audit: deps.audit, random: deps.random,
       rateLimit: snapshotRateLimit(deps.rateLimit),
       acknowledgeUnsafeStatelessDefaults: deps.acknowledgeUnsafeStatelessDefaults,
       cimdTransport: deps.cimdTransport,
@@ -81,7 +81,7 @@ export class Bridge {
     assertSafeDeploymentCombination(snapshot);
     this.config = snapshot.config;
     this.clock = snapshot.clock;
-    this.audit = snapshot.audit;
+    this.audit = snapshot.audit; this.random = snapshot.random ?? systemRandom;
     this.rateLimit = snapshot.rateLimit ?? noopRateLimit;
     this.cimd = new CimdResolver(snapshot);
     if (this.cimd.enabled) this.cimd.assertCapProfile(snapshot.cimdTransport, snapshot.cimdResolver); // boot-validate the cap profile
@@ -114,7 +114,7 @@ export class Bridge {
         ? body.token_endpoint_auth_method : undefined;
       const grantTypes = Object.hasOwn(body, "grant_types") ? body.grant_types : undefined;
       const registered = await registerClient(
-        { config: this.config, clock: this.clock, audit: this.audit },
+        { config: this.config, clock: this.clock, audit: this.audit, random: this.random },
         { redirectUris, applicationType, tokenEndpointAuthMethod, grantTypes },
       );
       return { status: 201, headers: { "cache-control": "no-store" }, body: registered };
