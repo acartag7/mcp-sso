@@ -133,6 +133,33 @@ test("loadCorpus rejects a stale contract quote", async () => {
   await expectCloneError(fixture, /contract quote is stale in clause 8\.4/u, (copy) => {
     copy.contract.quote = "This sentence is not in the canonical clause.";
   });
+  await expectCloneError(fixture, /contract quote is stale in clause 8\.4/u, (copy) => {
+    copy.status = "frozen"; copy.contract.quote = "This frozen sentence is stale.";
+    copy.receipt = { implementation: "fixture-test", version: "0.0.0", commit: "abcdef0", date: "2026-09-01" };
+  });
+});
+
+test("loadCorpus requires the complete contract sentence rather than a matching fragment", async () => {
+  const fixture = await realFixture(REAL_IDS[0]);
+  for (const quote of ["array-valued", "token verification.", "An array-valued `authorization` input"]) {
+    await expectCloneError(fixture, /contract quote must be a complete sentence/u, (copy) => { copy.contract.quote = quote; });
+  }
+});
+
+test("loadCorpus keeps a superseded fixture when its historical quote is no longer current", async () => {
+  const fixture = await realFixture(REAL_IDS[1]);
+  const root = await mkdtemp(join(tmpdir(), "mcp-sso-parity-identity-superseded-"));
+  const historicalId = "08-resource-server-verifier/8.3-historical-challenge";
+  try {
+    await writeFixture(root, fixture.id, fixture);
+    await writeFixture(root, historicalId, fixture, (copy) => {
+      copy.id = historicalId; copy.contract.clause = "8.3"; copy.contract.quote = "Historical sentence.";
+      copy.status = "superseded"; copy.supersededBy = fixture.id;
+    });
+    assert.equal((await loadCorpus(root)).length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("loadCorpus rejects a schema-valid clause with no canonical heading", async () => {

@@ -25,7 +25,7 @@ export async function loadCorpus(root = FIXTURES_ROOT): Promise<ParityFixture[]>
     const fixture = await loadFixture(path);
     const expectedId = relative(corpusRoot, path).split(sep).join("/").replace(/\.json$/u, "");
     validateFixtureIdentity(fixture, expectedId, path);
-    await validateQuote(fixture);
+    if (fixture.status !== "superseded") await validateQuote(fixture);
     fixtures.push(fixture);
   }
   return fixtures;
@@ -58,6 +58,21 @@ async function validateQuote(fixture: ParityFixture): Promise<void> {
   if (!clause.includes(fixture.contract.quote)) {
     throw new FixtureRunnerError(`${fixture.id}: contract quote is stale in clause ${fixture.contract.clause}`);
   }
+  if (!containsCompleteSentence(clause, fixture.contract.quote)) {
+    throw new FixtureRunnerError(`${fixture.id}: contract quote must be a complete sentence`);
+  }
+}
+
+function containsCompleteSentence(source: string, quote: string): boolean {
+  let index = source.indexOf(quote);
+  while (index !== -1) {
+    const before = source.slice(0, index);
+    const after = source.slice(index + quote.length);
+    const startsSentence = index === 0 || /[.!?](?:[`*_~"')\]}]+)?\s+$/u.test(before) || /(?:^|\n)[ \t]*(?:(?:[-+*]|\d+[.)]|>)[ \t]+)*(?:[*_~]+)?$/u.test(before);
+    if (startsSentence && /[.!?](?:[`*_~"')\]}]+)?$/u.test(quote) && (after === "" || /^(?:[*_~]+)?\s/u.test(after))) return true;
+    index = source.indexOf(quote, index + 1);
+  }
+  return false;
 }
 
 export function clauseSource(source: string, clause: string): string {
