@@ -710,7 +710,8 @@
         "instance_id": {
           "type": "string",
           "pattern": "^[A-Za-z0-9_-]{22,128}$"
-        }
+        },
+        "swept_through": { "$ref": "#/$defs/utcTimestamp" }
       }
     },
     "storeInstanceSelector": {
@@ -719,7 +720,8 @@
       "additionalProperties": false,
       "minProperties": 1,
       "properties": {
-        "instance_id": { "$ref": "#/$defs/storeInstanceRow/properties/instance_id" }
+        "instance_id": { "$ref": "#/$defs/storeInstanceRow/properties/instance_id" },
+        "swept_through": { "$ref": "#/$defs/storeInstanceRow/properties/swept_through" }
       }
     },
     "sha256Hex": {
