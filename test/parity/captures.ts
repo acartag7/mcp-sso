@@ -7,6 +7,7 @@ import { contentTypeEssence, isApplicationJsonContentType } from "./content-type
 import { FixtureRunnerError } from "./error.ts";
 import { assertJwt } from "./jwt-capture.ts";
 import { bodyObservation, headerObservation } from "./observations.ts";
+import { assertWireHeaderPairBytes } from "./wire-bytes.ts";
 
 export function materializeRequest(
   request: RequestSpec, captures: CaptureValues,
@@ -41,6 +42,7 @@ function resolveHeaders(headers: HeaderMap, captures: CaptureValues): Array<[str
       output.push([name, resolved]);
     }
   }
+  assertWireHeaderPairBytes(output);
   return output;
 }
 

@@ -2,10 +2,12 @@ import type { BodyValue } from "./types.ts";
 import { FixtureRunnerError } from "./error.ts";
 import { isApplicationJsonContentType } from "./content-type.ts";
 import { headerObservation } from "./observations.ts";
+import { assertWireHeaderBytes } from "./wire-bytes.ts";
 
 type ResponseHeaders = Record<string, string | string[]>;
 
 export function encodeResponseBody(body: BodyValue, headers: ResponseHeaders): Buffer {
+  assertWireHeaderBytes(headers);
   if ("absent" in body) return Buffer.alloc(0);
   const contentType = headerObservation(headers, "content-type");
   const raw = contentType.present ? contentType.value : undefined;

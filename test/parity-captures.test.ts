@@ -5,7 +5,8 @@ import { FixtureRunnerError } from "./parity/error.ts";
 import type { CaptureReference, CaptureValues, RequestSpec } from "./parity/types.ts";
 
 const captures: CaptureValues = new Map([
-  ["first", new Map([["token", "captured-token"], ["raw", "raw value"]])],
+  ["first", new Map([["token", "captured-token"], ["raw", "raw value"],
+    ["huge", "é".repeat(40000)], ["ascii", "b".repeat(70000)]])],
 ]);
 
 function capture(format: CaptureReference["$capture"]["format"], name = "token"): CaptureReference {
@@ -141,4 +142,28 @@ test("an omitted body stays omitted and does not add Content-Type", () => {
   const materialized = materializeRequest({ method: "GET", path: "/no-body" }, captures);
   assert.equal(materialized.body, undefined);
   assert.deepEqual(materialized.headers, []);
+});
+
+test("a resolved wire header map above the byte bound is rejected after capture resolution", () => {
+  failure(() => materializeRequest(request(undefined, { "x-probe": "é".repeat(33000) }), new Map()),
+    /65536 byte bound/u);
+  failure(() => materializeRequest(request(undefined, { "x-probe": "b".repeat(70000) }), new Map()),
+    /65536 byte bound/u);
+  failure(() => materializeRequest(request(undefined, { "x-probe": capture("raw", "huge") }), captures),
+    /65536 byte bound/u);
+  failure(() => materializeRequest(request(undefined, { "x-probe": capture("raw", "ascii") }), captures),
+    /65536 byte bound/u);
+});
+
+test("repeated occurrences are counted individually before the byte bound is applied", () => {
+  const value = "b".repeat(40000);
+  failure(() => materializeRequest(request(undefined, { "x-probe": [value, value] }), new Map()),
+    /65536 byte bound/u);
+});
+
+test("a wire header map at the byte bound is sent unchanged", () => {
+  const name = "x-p";
+  const value = "v".repeat(65536 - name.length - 2);
+  const materialized = materializeRequest(request(undefined, { [name]: value }), new Map());
+  assert.deepEqual(materialized.headers, [[name, value]]);
 });
