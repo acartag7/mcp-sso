@@ -1,6 +1,8 @@
+import { createBridgeConfig, type BridgeConfig } from "../../src/config.ts";
 import { FIXTURES_ROOT } from "./corpus.ts";
 import { FixtureRunnerError } from "./error.ts";
 import { privateJwk, publicKey } from "./keys.ts";
+import type { FixtureStore } from "./store.ts";
 
 export interface FixtureKeys {
   signingPrivate?: string;
@@ -11,6 +13,7 @@ export async function materializeConfigInput(
   literal: unknown,
   keys: FixtureKeys,
   fixturesRoot = FIXTURES_ROOT,
+  store?: FixtureStore,
 ): Promise<unknown> {
   const input = structuredClone(literal);
   if (keys.signingPublic !== undefined) await publicKey(keys.signingPublic, fixturesRoot);
@@ -21,7 +24,18 @@ export async function materializeConfigInput(
     }
     input.signingPrivateJwk = await privateJwk(keys.signingPrivate, fixturesRoot);
   }
+  if (store !== undefined && isRecord(input) && isRecord(input.dcr) && input.dcr.mode === "stored") {
+    input.dcr.store = store;
+  }
   return input;
+}
+
+export async function materializeConfig(
+  literal: unknown,
+  keys: FixtureKeys,
+  store: FixtureStore,
+): Promise<BridgeConfig> {
+  return createBridgeConfig(await materializeConfigInput(literal, keys, FIXTURES_ROOT, store) as BridgeConfig);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
