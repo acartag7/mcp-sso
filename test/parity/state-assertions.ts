@@ -81,3 +81,17 @@ function primaryValue(row: object, key: string): string {
 function byCodeUnit(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
+
+/** Contract 19.2: a chain member's pre-state is the expected post-state of the
+ *  one before it. The complete declared state must therefore equal the
+ *  preceding member's projected snapshot, including omitted record kinds, so a
+ *  member cannot inject rows the earlier step never produced or drop rows it
+ *  left behind. */
+export function assertPreStateEstablished(
+  pre: LogicalState, established: Required<LogicalState>, label: string,
+): void {
+  const want = normalized(established, `${label} preceding post-state`);
+  const declared = normalized(pre, `${label} pre-state`);
+  assert.deepStrictEqual(declared, want,
+    `${label} pre-state is not the expected post-state of the preceding member`);
+}
