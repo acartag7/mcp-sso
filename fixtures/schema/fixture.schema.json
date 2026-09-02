@@ -276,6 +276,7 @@
         },
         "headers": {
           "type": "object",
+          "maxProperties": 64,
           "description": "Lower-case header name to matcher; a header not listed is not asserted",
           "propertyNames": {
             "$ref": "#/$defs/headerName"
@@ -368,6 +369,7 @@
           },
           "headers": {
             "type": "object",
+            "maxProperties": 64,
             "description": "Exact outbound header-name set; each lower-case name maps to a value matcher",
             "propertyNames": {
               "$ref": "#/$defs/headerName"
@@ -838,7 +840,8 @@
       "description": "A string is one occurrence; an array is distinct occurrences on the wire, never joined",
       "oneOf": [
         {
-          "type": "string"
+          "type": "string",
+          "maxLength": 8192
         },
         {
           "$ref": "#/$defs/captureReference"
@@ -846,9 +849,10 @@
         {
           "type": "array",
           "minItems": 2,
+          "maxItems": 16,
           "items": {
             "oneOf": [
-              { "type": "string" },
+              { "type": "string", "maxLength": 8192 },
               { "$ref": "#/$defs/captureReference" }
             ]
           }
@@ -859,13 +863,16 @@
       "description": "A response header is literal: a string is one occurrence; an array is distinct occurrences on the wire, never joined",
       "oneOf": [
         {
-          "type": "string"
+          "type": "string",
+          "maxLength": 8192
         },
         {
           "type": "array",
           "minItems": 2,
+          "maxItems": 16,
           "items": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 8192
           }
         }
       ]
@@ -873,7 +880,8 @@
     "headerName": {
       "type": "string",
       "description": "Lowercase HTTP field name",
-      "pattern": "^[a-z0-9!#$%&'*+.^_`|~-]+$"
+      "pattern": "^[a-z0-9!#$%&'*+.^_`|~-]+$",
+      "maxLength": 256
     },
     "inboundRequest": {
       "type": "object",
@@ -884,8 +892,7 @@
       ],
       "properties": {
         "method": {
-          "type": "string",
-          "pattern": "^[A-Z]+$"
+          "enum": ["GET", "POST", "PUT", "HEAD", "OPTIONS", "DELETE"]
         },
         "path": {
           "type": "string",
@@ -893,6 +900,7 @@
         },
         "headers": {
           "type": "object",
+          "maxProperties": 64,
           "propertyNames": {
             "$ref": "#/$defs/headerName"
           },
@@ -1000,6 +1008,7 @@
             "headers": {
               "type": "object",
               "description": "Partial lower-case outbound request-header matcher",
+            "maxProperties": 64,
               "propertyNames": {
                 "$ref": "#/$defs/headerName"
               },
@@ -1028,6 +1037,7 @@
             },
             "headers": {
               "type": "object",
+              "maxProperties": 64,
               "propertyNames": {
                 "$ref": "#/$defs/headerName"
               },
@@ -1191,6 +1201,7 @@
             "status": { "type": "integer", "minimum": 200, "maximum": 299 },
             "headers": {
               "type": "object",
+              "maxProperties": 64,
               "propertyNames": {
                 "$ref": "#/$defs/headerName"
               },
