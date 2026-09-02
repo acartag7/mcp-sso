@@ -52,17 +52,18 @@ export class MemoryStore implements StorePort {
     if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
     if (this.consentJtis.has(jti)) return "replayed";
     if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return "replayed";
+    const stored = {
+      ...authCode, scopes: [...authCode.scopes], grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
+    };
     this.consentJtis.set(jti, expiresAtIso);
-    this.authCodes.set(authCode.codeHash, {
-      ...authCode, grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
-    });
+    this.authCodes.set(stored.codeHash, stored);
     return "stored";
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
     validateAuthCode(input);
-    this.authCodes.set(input.codeHash, { ...input, grantGeneration: grantGenerationForWrite(input.grantGeneration) });
+    this.authCodes.set(input.codeHash, { ...input, scopes: [...input.scopes], grantGeneration: grantGenerationForWrite(input.grantGeneration) });
   }
 
   async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {
@@ -99,8 +100,9 @@ export class MemoryStore implements StorePort {
     if (family && (family.grantGeneration !== grantGeneration || family.resource !== input.resource)) {
       throw new StoreInputError("family grantGeneration or resource mismatch");
     }
+    const row = { ...input, scopes: [...input.scopes], grantGeneration, consumedAt: null };
     if (!family) this.families.set(input.familyId, { revokedAt: null, grantGeneration, resource: input.resource });
-    this.refreshTokens.set(input.tokenHash, { ...input, grantGeneration, consumedAt: null });
+    this.refreshTokens.set(row.tokenHash, row);
   }
 
   async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<RefreshTokenRecord | null> {
@@ -209,10 +211,11 @@ export function createMemoryStore(): MemoryStore {
   return new MemoryStore();
 }
 
+/** Stored rows own their scopes array so a caller keeps no handle into the store. */
 function toRecord(stored: StoredRefresh): RefreshTokenRecord {
   return {
     tokenHash: stored.tokenHash, familyId: stored.familyId, previousTokenHash: stored.previousTokenHash,
-    clientId: stored.clientId, subject: stored.subject, resource: stored.resource, scopes: stored.scopes,
+    clientId: stored.clientId, subject: stored.subject, resource: stored.resource, scopes: [...stored.scopes],
     expiresAt: stored.expiresAt, grantGeneration: stored.grantGeneration,
   };
 }

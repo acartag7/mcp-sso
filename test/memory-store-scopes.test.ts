@@ -1,0 +1,88 @@
+// MemoryStore-private rotation check: the shared store-conformance suite owns
+// the public detachment cells (write, read, rotation independence) for every
+// adapter. This file pins only what needs MemoryStore internals: after
+// rotation the predecessor and successor stored rows hold independent scopes
+// arrays, which is invisible through the public API once every read returns a
+// copy.
+
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { SaveAuthCodeInput, SaveRefreshTokenInput } from "../src/ports/store.ts";
+import { MemoryStore } from "../src/store/memory.ts";
+
+const CLIENT = "client-1";
+const SUBJECT = "user-1";
+const FAMILY = "family-1";
+const PRED_HASH = "a".repeat(64);
+const SUCC_HASH = "b".repeat(64);
+const CODE_HASH = "c".repeat(64);
+const JTI = "jti-1";
+const NOW = "2026-01-01T00:00:00.000Z";
+const EXPIRES_AT = "2027-01-01T00:00:00.000Z";
+const RESOURCE = "https://api.example.com/mcp";
+
+function refreshInput(overrides: Partial<SaveRefreshTokenInput> = {}): SaveRefreshTokenInput {
+  return {
+    tokenHash: PRED_HASH, familyId: FAMILY, previousTokenHash: null, clientId: CLIENT, subject: SUBJECT,
+    resource: RESOURCE, scopes: ["mcp:read"], expiresAt: EXPIRES_AT, ...overrides,
+  };
+}
+
+function authCodeInput(overrides: Partial<SaveAuthCodeInput> = {}): SaveAuthCodeInput {
+  return {
+    codeHash: CODE_HASH, clientId: CLIENT, subject: SUBJECT, redirectUri: "https://app.example.com/callback",
+    resource: RESOURCE, scopes: ["mcp:read"], codeChallenge: "challenge", codeChallengeMethod: "S256",
+    expiresAt: EXPIRES_AT, ...overrides,
+  };
+}
+
+function storedRefreshRows(store: MemoryStore): Map<string, { scopes: string[] }> {
+  return (store as unknown as { refreshTokens: Map<string, { scopes: string[] }> }).refreshTokens;
+}
+
+
+
+
+
+test("after rotation the predecessor and successor rows own independent scopes", async () => {
+  const store = new MemoryStore();
+  await store.saveRefreshToken(refreshInput({ scopes: ["mcp:read"] }));
+  const predecessor = await store.rotateRefreshToken(
+    PRED_HASH, refreshInput({ tokenHash: SUCC_HASH, previousTokenHash: PRED_HASH, scopes: ["ignored"] }), NOW,
+  );
+  assert.ok(predecessor);
+  predecessor.scopes.push("mcp:write");
+  const successor = await store.findRefreshToken(SUCC_HASH);
+  assert.ok(successor);
+  assert.deepEqual(successor.scopes, ["mcp:read"], "successor inherits the predecessor's granted scopes");
+  successor.scopes.push("mcp:admin");
+  const rows = storedRefreshRows(store);
+  assert.notEqual(rows.get(PRED_HASH)?.scopes, rows.get(SUCC_HASH)?.scopes, "stored rows must not share one array");
+  const storedPredecessor = await store.findRefreshToken(PRED_HASH);
+  assert.deepEqual(storedPredecessor?.scopes, ["mcp:read"]);
+  await store.close();
+});
+
+test("findGrantedScopes returns a fresh array the caller cannot corrupt the store through", async () => {
+  const store = new MemoryStore();
+  await store.saveRefreshToken(refreshInput({ scopes: ["mcp:read", "mcp:write"] }));
+  const granted = await store.findGrantedScopes(SUBJECT, CLIENT, NOW);
+  assert.deepEqual(granted, ["mcp:read", "mcp:write"]);
+  granted.push("mcp:admin");
+  assert.deepEqual(await store.findGrantedScopes(SUBJECT, CLIENT, NOW), ["mcp:read", "mcp:write"]);
+  await store.close();
+});
+
+test("an untouched store round-trips scopes exactly", async () => {
+  const store = new MemoryStore();
+  const scopes = ["mcp:read", "mcp:write", "mcp:admin"];
+  await store.saveRefreshToken(refreshInput({ scopes }));
+  const found = await store.findRefreshToken(PRED_HASH);
+  assert.deepEqual(found?.scopes, scopes);
+  assert.deepEqual(await store.findGrantedScopes(SUBJECT, CLIENT, NOW), scopes);
+  await store.saveAuthCode(authCodeInput({ scopes }));
+  const consumed = await store.consumeAuthCode(CODE_HASH, NOW);
+  assert.deepEqual(consumed?.scopes, scopes);
+  await store.close();
+});
+
