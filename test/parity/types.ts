@@ -43,7 +43,7 @@ export interface ClientRegistrationRow {
   client_id: string; redirect_uris: string[]; application_type: "native" | "web";
   issued_at_epoch: number;
 }
-export interface StoreInstanceRow { instance_id: string }
+export interface StoreInstanceRow { instance_id: string; swept_through?: string }
 
 export interface HttpExchange {
   request: { method: string; url: string; headers: Record<string, Matcher>; body: Matcher };

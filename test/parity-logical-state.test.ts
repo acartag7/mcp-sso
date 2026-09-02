@@ -79,6 +79,23 @@ test("a hydrated logical state projects back to the same rows sorted by primary 
   }
 });
 
+test("a hydrated sweep watermark is carried on the tables and projects back", () => {
+  const stamped = { instance_id: INSTANCE_ID, swept_through: CONSUMED_AT };
+  const tables = hydrateLogicalState({ store_instance: [stamped] });
+  assert.strictEqual(tables.sweptThrough, CONSUMED_AT);
+  assert.deepStrictEqual(projectLogicalState(tables, INSTANCE_ID).store_instance, [stamped]);
+
+  const bare = hydrateLogicalState({ store_instance: [{ instance_id: INSTANCE_ID }] });
+  assert.strictEqual(bare.sweptThrough, undefined);
+  assert.deepStrictEqual(projectLogicalState(bare, INSTANCE_ID).store_instance,
+    [{ instance_id: INSTANCE_ID }]);
+
+  const unrowed = hydrateLogicalState({});
+  assert.strictEqual(unrowed.sweptThrough, undefined);
+  assert.deepStrictEqual(projectLogicalState(unrowed, INSTANCE_ID).store_instance,
+    [{ instance_id: INSTANCE_ID }]);
+});
+
 test("grant generations hydrate as legacy null or the stated value and project back exactly", () => {
   const legacy = hydrateLogicalState({
     authorization_code: [authRow()], refresh_token: [refreshRow()], revoked_family: [revokedRow()],
@@ -204,4 +221,26 @@ test("rows sort by code unit order rather than locale collation", () => {
   const jtis = projectLogicalState(hydrateLogicalState({ consent_jti: rows }), INSTANCE_ID).consent_jti;
 
   assert.deepStrictEqual(jtis.map((row) => row.jti), ["Z-jti", "_jti", "a-jti"]);
+});
+
+test("the schema-backed fixture path loads a swept_through watermark", async () => {
+  const { loadFixture } = await import("./parity/schema-json.ts");
+  const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+  const { join, resolve } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { tmpdir } = await import("node:os");
+  const root = fileURLToPath(new URL("../", import.meta.url));
+  const source = structuredClone(await loadFixture(
+    resolve(root, "fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable.json")));
+  if (source.kind !== "fixture") throw new Error("expected HTTP fixture");
+  source.given.state = { store_instance: [{ instance_id: "abcdefghijklmnopqrstuv", swept_through: "2026-09-01T00:00:00.000Z" }] };
+  const directory = await mkdtemp(join(tmpdir(), "mcp-sso-swept-"));
+  const path = join(directory, "fixture.json");
+  try {
+    await writeFile(path, JSON.stringify(source), "utf8");
+    const loaded = await loadFixture(path);
+    assert.deepEqual(loaded.given.state, {
+      store_instance: [{ instance_id: "abcdefghijklmnopqrstuv", swept_through: "2026-09-01T00:00:00.000Z" }],
+    });
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

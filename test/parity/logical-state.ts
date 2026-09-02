@@ -24,12 +24,15 @@ export interface LogicalTables {
   families: Map<string, RefreshFamily>;
   clients: Map<string, ClientRegistration>;
   instanceId: string | undefined;
+  /** The consent-replay sweep watermark the row's store already performed, so a
+   *  chained fixture inherits the sweep an earlier member performed. */
+  sweptThrough: string | undefined;
 }
 
 export function hydrateLogicalState(state: LogicalState): LogicalTables {
   const tables: LogicalTables = {
     authCodes: new Map(), consentJtis: new Map(), refreshTokens: new Map(),
-    families: new Map(), clients: new Map(), instanceId: undefined,
+    families: new Map(), clients: new Map(), instanceId: undefined, sweptThrough: undefined,
   };
   for (const row of uniqueRows(state.authorization_code, (r) => r.code_hash, "authorization_code")) {
     tables.authCodes.set(row.code_hash, authRecord(row));
@@ -49,6 +52,7 @@ export function hydrateLogicalState(state: LogicalState): LogicalTables {
   const instances = uniqueRows(state.store_instance, (r) => r.instance_id, "store_instance");
   if (instances.length > 1) throw new FixtureRunnerError("state has multiple store_instance rows");
   tables.instanceId = instances[0]?.instance_id;
+  tables.sweptThrough = instances[0]?.swept_through;
   return tables;
 }
 
@@ -61,7 +65,7 @@ export function projectLogicalState(tables: LogicalTables, instanceId: string): 
     refresh_token: sortRows([...tables.refreshTokens.values()].map(refreshRow), (row) => row.token_hash),
     revoked_family: sortRows(revokedFamilyRows(tables.families), (row) => row.family_id),
     client_registration: sortRows(userClientRows(tables.clients), (row) => row.client_id),
-    store_instance: [{ instance_id: instanceId }],
+    store_instance: [{ instance_id: instanceId, ...optional("swept_through", tables.sweptThrough) }],
   };
 }
 
