@@ -1,5 +1,6 @@
 import type { CimdTransport } from "../../src/cimd/transport.ts";
 import { FixtureRunnerError } from "./error.ts";
+import { assertWireHeaderBytes } from "./wire-bytes.ts";
 import { encodeResponseBody } from "./response-body.ts";
 import type { BodyValue, HeaderMap, HttpExchange, ObservedOutbound } from "./types.ts";
 
@@ -24,6 +25,7 @@ export class ScriptedCimdTransport implements CimdTransport {
       },
     });
     const headersDistinct = explicitResponseHeaders(response.headers);
+    assertWireHeaderBytes(headersDistinct);
     return {
       status: response.status,
       redirected: false,

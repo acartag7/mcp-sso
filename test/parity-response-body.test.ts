@@ -71,3 +71,24 @@ test("undefined response values fail with the fixture runner error", () => {
   const error = expectEncodingError({ value: undefined }, { "content-type": "application/json" });
   assert.equal(error.name, "FixtureRunnerError");
 });
+
+function expectBoundError(body: BodyValue, headers: Headers): FixtureRunnerError {
+  let caught: unknown;
+  try { encodeResponseBody(body, headers); }
+  catch (error) { caught = error; }
+  assert.ok(caught instanceof FixtureRunnerError);
+  assert.match(caught.message, /65536 byte bound/u);
+  return caught;
+}
+
+test("a rendered wire header map above the byte bound is rejected, with multibyte values counted as bytes", () => {
+  expectBoundError({ value: "ok" }, { "x-multibyte": "é".repeat(33000) });
+  expectBoundError({ value: "ok" }, { "x-a": "b".repeat(33000), "x-b": ["c".repeat(33000)] });
+  expectBoundError({ absent: true }, { xx: Array.from({ length: 40000 }, () => "") });
+});
+
+test("a rendered wire header map at the byte bound is accepted", () => {
+  const name = "x-p";
+  const value = "v".repeat(65536 - name.length);
+  assert.equal(bytes({ absent: true }, { [name]: value }), "");
+});

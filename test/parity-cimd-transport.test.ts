@@ -179,3 +179,14 @@ async function chunks(
   for await (const chunk of body as AsyncIterable<Uint8Array>) result.push(chunk);
   return result;
 }
+
+test("an oversized CIMD response header map is rejected when the exchange is constructed, not when its body is read", async () => {
+  const transport = new ScriptedCimdTransport((call) => ({
+    status: 200, headers: { "content-type": "application/json", "x-big": "v".repeat(70000) },
+    body: { value: { client_id: "client" } },
+  }));
+  await assert.rejects(
+    transport.connectAndGet(request),
+    (error: unknown) => error instanceof FixtureRunnerError && /65536 byte bound/u.test(error.message),
+  );
+});
