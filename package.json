@@ -88,6 +88,7 @@
   ],
   "scripts": {
     "test": "node --test --test-reporter=spec",
+    "test:parity": "node --test --test-reporter=spec test/parity-fixtures.test.ts",
     "typecheck": "tsc --noEmit",
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "prepublishOnly": "pnpm run build",
