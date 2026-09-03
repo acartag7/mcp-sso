@@ -31,6 +31,11 @@ async function conformingNow(root = ROOT) {
 
 export const NOW = await conformingNow();
 
+/** The fast-uri transitive pin the real ledger currently records. Deriving it
+ *  keeps these fixtures correct across an advisory bump instead of hardcoding
+ *  one version in three files. */
+export const FAST_URI_PIN = (await loadDependencyPolicy(ROOT)).transitivePins["fast-uri"].version;
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -71,11 +76,11 @@ export async function makeHonoExceptionYoung(root, { includeWorkspaceExclusion =
   return { policy, youngPublished };
 }
 
-async function setLockfileFastUri(root, { version = "3.1.5", secondVersion = null } = {}) {
+async function setLockfileFastUri(root, { version = FAST_URI_PIN, secondVersion = null } = {}) {
   const lockfile = join(root, "pnpm-lock.yaml");
-  if (version !== "3.1.5") {
-    await replace(lockfile, "  fast-uri@3.1.5:\n", `  fast-uri@${version}:\n`);
-    await replace(lockfile, "  fast-uri@3.1.5: {}", `  fast-uri@${version}: {}`);
+  if (version !== FAST_URI_PIN) {
+    await replace(lockfile, `  fast-uri@${FAST_URI_PIN}:\n`, `  fast-uri@${version}:\n`);
+    await replace(lockfile, `  fast-uri@${FAST_URI_PIN}: {}`, `  fast-uri@${version}: {}`);
   }
   if (secondVersion !== null) {
     // Model a genuine two-resolution tree: both sections list both versions.
@@ -84,8 +89,23 @@ async function setLockfileFastUri(root, { version = "3.1.5", secondVersion = nul
   }
 }
 
+/** Age the recorded fast-uri transitive pin to one day old, so the 15-day floor
+ *  is the only thing that can reject it. Mirrors makeHonoExceptionYoung for the
+ *  transitive half of ledger rule 2. */
+export async function makeTransitivePinYoung(root) {
+  const policy = await loadDependencyPolicy(root);
+  const pin = policy.transitivePins["fast-uri"];
+  const youngPublished = new Date(NOW.getTime() - DAY_MS).toISOString();
+  await replace(
+    join(root, "docs/dependency-ledger.md"),
+    `"published": "${pin.published}"`,
+    `"published": "${youngPublished}"`,
+  );
+  return { pin, youngPublished };
+}
+
 export async function makeTransitiveException(root, {
-  version = "3.1.5",
+  version = FAST_URI_PIN,
   lockfileVersion = null,
   secondVersion = null,
   packageName = "fast-uri",
