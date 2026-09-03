@@ -7,8 +7,14 @@
     "clause": "8.4",
     "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
   },
-  "status": "draft",
-  "notes": "Host profile because the exact challenge pins the reference implementation's origin-root protected-resource metadata location; Atesaki D1 uses its route-scoped location. Draft until the reference runner passes it. The response body is pinned by section 09 and is asserted by that section's fixture, not here. The audit event name and reason are pinned by section 13 and are added when that section's fixtures land. Both bearer values are independently valid corpus-signed tokens for this issuer, resource, and clock. Selecting either reaches the protected handler and returns 204, so only rejection before first/last selection can satisfy the expected 401.",
+  "status": "frozen",
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "63ed98774c5bbbdd486e1aa9f878c194ca7f1ea3",
+    "date": "2026-09-02"
+  },
+  "notes": "Host profile because the exact challenge pins the reference implementation's origin-root protected-resource metadata location; Atesaki D1 uses its route-scoped location. The response body is pinned by section 09 and is asserted by that section's fixture, not here. The audit event name and reason are pinned by section 13 and are added when that section's fixtures land. Both bearer values are independently valid corpus-signed tokens for this issuer, resource, and clock. Selecting either reaches the protected handler and returns 204, so only rejection before first/last selection can satisfy the expected 401.",
   "given": {
     "config": {
       "issuer": "https://api.example.com",

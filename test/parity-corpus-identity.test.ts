@@ -62,11 +62,11 @@ async function expectCloneError(
   }
 }
 
-test("loadCorpus accepts both real draft fixtures", async () => {
+test("loadCorpus accepts both real frozen fixtures", async () => {
   const fixtures = await loadCorpus();
   assert.deepEqual(fixtures.map(({ id, profile, status }) => [id, profile, status]).toSorted(), [
-    [REAL_IDS[1], "host", "draft"],
-    [REAL_IDS[0], "portable", "draft"],
+    [REAL_IDS[1], "host", "frozen"],
+    [REAL_IDS[0], "portable", "frozen"],
   ]);
 });
 

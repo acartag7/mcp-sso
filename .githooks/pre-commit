@@ -68,8 +68,6 @@ fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-po
 fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json,\
 fixtures/keys/signing-private.pem,\
 fixtures/keys/signing-public.pem,\
-fixtures/MANIFEST.json,\
-fixtures/CATALOGUE.md,\
 fixtures/FREEZE-LOG.md"
 export PG_CONTRACT_PATHS="${PG_CONTRACT_PATHS:-$default_contract_paths}"
 

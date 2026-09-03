@@ -125,7 +125,7 @@ test("loadCorpus does not reserve names from superseded history", async () => {
   ], async (root) => {
     const fixtures = await loadCorpus(root);
     assert.deepEqual(fixtures.map(({ id, status }) => [id, status]).toSorted(), [
-      [active, "draft"], [history, "superseded"],
+      [active, "frozen"], [history, "superseded"],
     ]);
   });
 });

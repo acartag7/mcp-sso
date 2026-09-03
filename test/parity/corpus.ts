@@ -8,7 +8,7 @@ import type { ParityFixture } from "./types.ts";
 
 const PROJECT_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 export const FIXTURES_ROOT = resolve(PROJECT_ROOT, "fixtures");
-const ROOT_FILES = new Set(["README.md", "FREEZE-LOG.md", "MANIFEST.json", "CATALOGUE.md"]);
+const ROOT_FILES = new Set(["README.md", "FREEZE-LOG.md"]);
 const ROOT_DIRECTORIES = new Set(["keys", "schema"]);
 const SECTION_DIRECTORY = /^(0[1-9]|1[0-9])-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 
