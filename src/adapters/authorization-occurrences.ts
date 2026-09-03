@@ -23,7 +23,11 @@ export function authorizationOccurrences(
     // non-enumerable source key is not part of the header map.
     if (!descriptor.enumerable) continue;
     const value = descriptor.value;
-    if (key.toLowerCase() !== "authorization" || value === undefined) continue;
+    if (key.toLowerCase() !== "authorization") continue;
+    // A PRESENT undefined under a matching key is evidence of a malformed
+    // source, not an absent header: absence is the key missing entirely, so
+    // skipping it would let a case-variant junk entry drop a real occurrence.
+    if (value === undefined) throw new TypeError(`${label} Authorization occurrence is not a string`);
     if (typeof value === "string" && label === "normalized") occurrences.push(value);
     else if (Array.isArray(value)) {
       // Snapshot first; the snapshot's own length is the emptiness decision,

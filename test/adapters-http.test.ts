@@ -228,3 +228,14 @@ test("authorizationOccurrences counts non-enumerable array elements as occurrenc
   assert.deepEqual(authorizationOccurrences(sourceOnly), ["Bearer attacker"],
     "a non-enumerable source key is not part of the header map, matching Object.entries semantics");
 });
+
+test("authorizationOccurrences rejects a present undefined under a matching key", () => {
+  const distinct = { Authorization: undefined, authorization: ["Bearer valid"] } as unknown as Record<string, string[]>;
+  assert.throws(() => authorizationOccurrences(distinct),
+    /distinct Authorization occurrence is not a string/,
+    "a case-variant junk entry must not silently drop the real occurrence");
+  const normalized = { Authorization: undefined, authorization: "Bearer valid" } as unknown as Record<string, string>;
+  assert.throws(() => authorizationOccurrences(undefined, normalized),
+    /normalized Authorization occurrence is not a string/,
+    "both source branches treat present-undefined as malformed, not absent");
+});
