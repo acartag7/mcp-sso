@@ -16,6 +16,8 @@ const execFileAsync = promisify(execFile);
 const REAL_IDS = [
   "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable",
   "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed",
+  "08-resource-server-verifier/8.4-single-authorization-succeeds-portable",
+  "08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable",
 ] as const;
 
 async function realFixture(id: string): Promise<ParityFixture> {
@@ -62,11 +64,13 @@ async function expectCloneError(
   }
 }
 
-test("loadCorpus accepts both real draft fixtures", async () => {
+test("loadCorpus accepts all four real 8.4 fixtures", async () => {
   const fixtures = await loadCorpus();
   assert.deepEqual(fixtures.map(({ id, profile, status }) => [id, profile, status]).toSorted(), [
     [REAL_IDS[1], "host", "draft"],
     [REAL_IDS[0], "portable", "draft"],
+    [REAL_IDS[2], "portable", "draft"],
+    [REAL_IDS[3], "portable", "draft"],
   ]);
 });
 
@@ -116,7 +120,7 @@ test("loadCorpus resolves the default fixture root outside the process working d
   const directory = await mkdtemp(join(tmpdir(), "mcp-sso-parity-identity-cwd-"));
   try {
     const moduleUrl = new URL("./parity/corpus.ts", import.meta.url).href;
-    const script = `const { loadCorpus } = await import(${JSON.stringify(moduleUrl)}); const fixtures = await loadCorpus(); if (fixtures.length !== 2) throw new Error("unexpected fixture count");`;
+    const script = `const { loadCorpus } = await import(${JSON.stringify(moduleUrl)}); const fixtures = await loadCorpus(); if (fixtures.length !== 4) throw new Error("unexpected fixture count");`;
     await execFileAsync(process.execPath, ["--input-type=module", "--eval", script], { cwd: directory });
   } finally {
     await rm(directory, { recursive: true, force: true });

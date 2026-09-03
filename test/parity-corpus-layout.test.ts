@@ -28,11 +28,13 @@ function relativeFixturePath(path: string, root = FIXTURES_ROOT): string {
   return relative(root, path).split(sep).join("/");
 }
 
-test("discovers exactly the two real fixture paths", async () => {
+test("discovers exactly the four real fixture paths", async () => {
   const paths = await fixturePaths();
   assert.deepEqual(paths.map((path) => relativeFixturePath(path)).toSorted(), [
     "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable.json",
     "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json",
+    "08-resource-server-verifier/8.4-single-authorization-succeeds-portable.json",
+    "08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable.json",
   ]);
 });
 

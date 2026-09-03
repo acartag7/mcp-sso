@@ -275,10 +275,12 @@ test("a chain shares captures between members", async () => {
   }
 });
 
-test("the section 8.4 drafts load with bound ids and clauses", async () => {
+test("the section 8.4 fixtures load with bound ids and clauses", async () => {
   const corpus = await loadCorpus();
   for (const id of ["08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable",
-    "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed"]) {
+    "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed",
+    "08-resource-server-verifier/8.4-single-authorization-succeeds-portable",
+    "08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable"]) {
     const fixture = corpus.find((candidate) => candidate.id === id);
     assert.ok(fixture, `${id} missing from the corpus`);
     assert.equal(fixture.kind, "fixture");
