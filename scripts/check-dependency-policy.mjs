@@ -257,7 +257,11 @@ export async function verifyLocalDependencyPolicy(root = process.cwd(), now = ne
     else if (resolved.size !== 1 || !resolved.has(record.version)) {
       errors.push(`${name}: lockfile resolutions ${[...resolved].sort().join(",")} != transitive pin ${record.version}`);
     }
-    assertAge(name, record.published, policy.minimumAgeDays, now, errors);
+    // Ledger rule 2 waits for ordinary updates and does NOT wait for a published
+    // advisory fix, for a transitive pin exactly as for a direct one. The direct
+    // loop above consults `exceptions`; this one did not, so a validated
+    // transitive advisory exception could never actually waive the floor.
+    if (!exceptions.has(name)) assertAge(name, record.published, policy.minimumAgeDays, now, errors);
   }
   for (const name of workspace.overrides.keys()) {
     if (!(name in policy.transitivePins)) errors.push(`${name}: workspace override is missing from transitivePins`);

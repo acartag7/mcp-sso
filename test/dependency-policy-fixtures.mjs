@@ -31,9 +31,9 @@ async function conformingNow(root = ROOT) {
 
 export const NOW = await conformingNow();
 
-/** The fast-uri transitive pin the real ledger currently records. Derived so a
- *  pin bump does not churn these fixtures; keep in sync with the same constant
- *  on the age-gate branch. */
+/** The fast-uri transitive pin the real ledger currently records. Deriving it
+ *  keeps these fixtures correct across an advisory bump instead of hardcoding
+ *  one version in three files. */
 export const FAST_URI_PIN = (await loadDependencyPolicy(ROOT)).transitivePins["fast-uri"].version;
 
 afterEach(async () => {
@@ -87,6 +87,21 @@ async function setLockfileFastUri(root, { version = FAST_URI_PIN, secondVersion 
     await replace(lockfile, `  fast-uri@${version}:\n`, `  fast-uri@${version}:\n  fast-uri@${secondVersion}:\n`);
     await replace(lockfile, `  fast-uri@${version}: {}`, `  fast-uri@${version}: {}\n  fast-uri@${secondVersion}: {}`);
   }
+}
+
+/** Age the recorded fast-uri transitive pin to one day old, so the 15-day floor
+ *  is the only thing that can reject it. Mirrors makeHonoExceptionYoung for the
+ *  transitive half of ledger rule 2. */
+export async function makeTransitivePinYoung(root) {
+  const policy = await loadDependencyPolicy(root);
+  const pin = policy.transitivePins["fast-uri"];
+  const youngPublished = new Date(NOW.getTime() - DAY_MS).toISOString();
+  await replace(
+    join(root, "docs/dependency-ledger.md"),
+    `"published": "${pin.published}"`,
+    `"published": "${youngPublished}"`,
+  );
+  return { pin, youngPublished };
 }
 
 export async function makeTransitiveException(root, {
