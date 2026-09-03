@@ -70,9 +70,9 @@ An OSV/Dependabot scan flagged 8 published advisories. Every one sits in a **dev
 | `find-my-way` (`fastify`) | 9.6.0 | 9.7.0 | GHSA-c96f-x56v-gq3h | ✅ ordinary, 9.7.0 published 2026-07-21 |
 | `ip-address` (SDK → `express-rate-limit`) | 10.2.0 | 10.3.1 | GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh, GHSA-22jq-vg5j-6vgg | ✅ ordinary, 10.3.1 published 2026-07-25 |
 | `@hono/node-server` (SDK) | 1.19.14 | 1.19.17 | GHSA-frvp-7c67-39w9 | ✅ ordinary, 1.19.17 published 2026-07-27 (≥ the 1.19.15 minimum fix, newest within the SDK's `^1.19.9` and past the floor) |
-| `fast-uri` (`ajv`/`fast-json-stringify` under `fastify` + SDK) | 3.1.2 | 3.1.5 | GHSA-4c8g-83qw-93j6, GHSA-v2hh-gcrm-f6hx, GHSA-7p8r-x3mc-p8w7 | ✅ ordinary, 3.1.5 published 2026-07-31 |
+| `fast-uri` (`ajv`/`fast-json-stringify` under `fastify` + SDK) | 3.1.5 | 4.1.2 | cleared by the move: GHSA-f65p-4m7j-42xc, GHSA-jqff-g426-hqxp, GHSA-fph4-wmhf-6fwf, GHSA-5jgf-p345-68v8 (all affect <3.1.6 only); machine-verified ids stay the 2026-07 three, whose 4.x-line fixes 4.0.1/4.1.1/4.1.2 bound 4.1.2 | ✅ ordinary, 4.1.2 published 2026-07-31 |
 
-`fast-uri@3.1.5` is the **minimum version fixing all three** of its advisories (`3.1.3` fixes one, `3.1.4` two, so a partial bump would leave `pnpm audit` red while reading as "fixed"). It was published 2026-07-31T09:16:56.212Z and crossed the 15-day floor at **2026-08-15T09:16:56.212Z**. The exact workspace override keeps every dev-tree path on that minimum complete fix. It does not add a published dependency: the package still has `jose` as its sole runtime dependency.
+`fast-uri@3.1.5` was the minimum version fixing its 2026-07 advisory round (`3.1.3` fixes one, `3.1.4` two). Four further advisories in 2026-08 affect everything below 3.1.6, and fastify 5.12.1 (through `@fastify/ajv-compiler ^4.0.5`) now declares `fast-uri ^4.0.0`, so holding the 3.x line both carries the advisories and overrides a major the dependency graph itself requires. The override therefore moved to the 4.x line: 4.1.2, published 2026-07-31T09:09:01.713Z, past the floor as an ordinary pin, outside every published vulnerable range, and matching the range fastify resolves. It does not add a published dependency: the package still has `jose` as its sole runtime dependency.
 
 ## Optional peer dependencies (not shipped to consumers)
 
@@ -131,8 +131,8 @@ The following block is the machine-readable source used by `check:deps`. The hum
   ],
   "transitivePins": {
     "fast-uri": {
-      "version": "3.1.5",
-      "published": "2026-07-31T09:16:56.212Z",
+      "version": "4.1.2",
+      "published": "2026-07-31T09:09:01.713Z",
       "advisoryIds": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx", "GHSA-7p8r-x3mc-p8w7"]
     }
   },

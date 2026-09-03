@@ -31,6 +31,11 @@ async function conformingNow(root = ROOT) {
 
 export const NOW = await conformingNow();
 
+/** The fast-uri transitive pin the real ledger currently records. Derived so a
+ *  pin bump does not churn these fixtures; keep in sync with the same constant
+ *  on the age-gate branch. */
+export const FAST_URI_PIN = (await loadDependencyPolicy(ROOT)).transitivePins["fast-uri"].version;
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -71,11 +76,11 @@ export async function makeHonoExceptionYoung(root, { includeWorkspaceExclusion =
   return { policy, youngPublished };
 }
 
-async function setLockfileFastUri(root, { version = "3.1.5", secondVersion = null } = {}) {
+async function setLockfileFastUri(root, { version = FAST_URI_PIN, secondVersion = null } = {}) {
   const lockfile = join(root, "pnpm-lock.yaml");
-  if (version !== "3.1.5") {
-    await replace(lockfile, "  fast-uri@3.1.5:\n", `  fast-uri@${version}:\n`);
-    await replace(lockfile, "  fast-uri@3.1.5: {}", `  fast-uri@${version}: {}`);
+  if (version !== FAST_URI_PIN) {
+    await replace(lockfile, `  fast-uri@${FAST_URI_PIN}:\n`, `  fast-uri@${version}:\n`);
+    await replace(lockfile, `  fast-uri@${FAST_URI_PIN}: {}`, `  fast-uri@${version}: {}`);
   }
   if (secondVersion !== null) {
     // Model a genuine two-resolution tree: both sections list both versions.
@@ -85,7 +90,7 @@ async function setLockfileFastUri(root, { version = "3.1.5", secondVersion = nul
 }
 
 export async function makeTransitiveException(root, {
-  version = "3.1.5",
+  version = FAST_URI_PIN,
   lockfileVersion = null,
   secondVersion = null,
   packageName = "fast-uri",
