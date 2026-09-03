@@ -135,3 +135,16 @@ test("authorizationOccurrences rejects a malformed duplicate instead of dropping
   assert.deepEqual(typed(undefined, { "content-type": 7, authorization: "Bearer valid" }), ["Bearer valid"],
     "malformed values under other keys are none of this boundary's business");
 });
+
+test("authorizationOccurrences gives the distinct source the same case and type closure", () => {
+  const distinctTyped = authorizationOccurrences as (d: Record<string, unknown>, n?: undefined) => string[] | undefined;
+  assert.deepEqual(
+    distinctTyped({ Authorization: ["Bearer attacker"], authorization: ["Bearer valid"] }),
+    ["Bearer attacker", "Bearer valid"],
+    "hand-built case-variant distinct keys merge, so more-than-one rejects",
+  );
+  assert.throws(() => distinctTyped({ authorization: [7, "Bearer valid"] }),
+    /distinct Authorization occurrence is not a string/);
+  assert.equal(authorizationOccurrences({ authorization: [] }), undefined,
+    "an empty occurrence list is absence, which still fails closed at the verifier");
+});

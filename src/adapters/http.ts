@@ -86,16 +86,23 @@ export function headersFromDistinct(
  *  keys and every match is kept, so a case-duplicated map such as
  *  `{ Authorization: a, authorization: b }` yields BOTH values and the
  *  verifier's more-than-one rule rejects the request instead of one
- *  credential silently winning. A matching value or array element of the
- *  wrong type throws: a malformed map becomes a rejected request through the
- *  caller's error mapping, never a silently selected credential. */
+ *  credential silently winning. Both sources get the same treatment: keys are
+ *  scanned case-insensitively and merged (Node lower-cases headersDistinct
+ *  itself, but a hand-built map may not), and a matching value or element of
+ *  the wrong type throws, so a malformed map becomes a rejected request
+ *  through the caller's error mapping, never a silently selected credential. */
 export function authorizationOccurrences(
   distinct: Record<string, string[] | undefined> | undefined,
   normalized?: NormRequest["headers"],
 ): string[] | undefined {
   if (distinct !== undefined) {
-    const values = distinct.authorization;
-    return values !== undefined && values.length > 0 ? [...values] : undefined;
+    const occurrences: string[] = [];
+    for (const [key, values] of Object.entries(distinct)) {
+      if (key.toLowerCase() !== "authorization" || values === undefined || values.length === 0) continue;
+      if (values.every((entry) => typeof entry === "string")) occurrences.push(...values);
+      else throw new TypeError("distinct Authorization occurrence is not a string");
+    }
+    return occurrences.length > 0 ? occurrences : undefined;
   }
   if (normalized === undefined) return undefined;
   const occurrences: string[] = [];
