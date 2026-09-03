@@ -48,13 +48,13 @@ export class MemoryStore implements StorePort {
     this.ensureOpen();
     assertStoreInstanceId(expectedStoreInstanceId);
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
-    validateAuthCode(authCode);
+    // Snapshot ALL caller-controlled data first: property reads and the scopes
+    // spread run caller code, and reentrant data (an iterator that calls back
+    // into the store, or hostile getters) must never interleave with a guard.
+    const snapshot = { ...authCode, scopes: [...authCode.scopes] };
+    validateAuthCode(snapshot);
+    const stored = { ...snapshot, grantGeneration: grantGenerationForWrite(snapshot.grantGeneration) };
     if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
-    // Materialize before the guards: the scopes spread runs caller code, and a
-    // reentrant iterable could nest a commit past the replay check otherwise.
-    const stored = {
-      ...authCode, scopes: [...authCode.scopes], grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
-    };
     if (this.consentJtis.has(jti)) return "replayed";
     if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return "replayed";
     this.consentJtis.set(jti, expiresAtIso);
@@ -91,21 +91,21 @@ export class MemoryStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
-    input = normalizeRefreshTokenWrite(input);
+    // Snapshot ALL caller-controlled data first, as commitConsentApproval does.
+    const snapshot = { ...input, scopes: [...input.scopes] };
+    input = normalizeRefreshTokenWrite(snapshot);
     validateRefreshToken(input);
+    const grantGeneration = grantGenerationForWrite(input.grantGeneration);
+    const row = { ...input, grantGeneration, consumedAt: null };
     // §12.2 invariant 8: never silently overwrite — an overwrite would rebuild
     // the row with consumedAt:null, resurrecting a consumed token (parity with
     // the SQL stores' PRIMARY KEY rejection).
-    if (this.refreshTokens.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
-    const grantGeneration = grantGenerationForWrite(input.grantGeneration);
-    // Materialize before reading token/family state: the scopes spread runs
-    // caller code, and a reentrant iterable could nest a save past the check.
-    const row = { ...input, scopes: [...input.scopes], grantGeneration, consumedAt: null };
-    const family = this.families.get(input.familyId);
-    if (family && (family.grantGeneration !== grantGeneration || family.resource !== input.resource)) {
+    if (this.refreshTokens.has(row.tokenHash)) throw new StoreInputError("tokenHash already exists");
+    const family = this.families.get(row.familyId);
+    if (family && (family.grantGeneration !== grantGeneration || family.resource !== row.resource)) {
       throw new StoreInputError("family grantGeneration or resource mismatch");
     }
-    if (!family) this.families.set(input.familyId, { revokedAt: null, grantGeneration, resource: input.resource });
+    if (!family) this.families.set(row.familyId, { revokedAt: null, grantGeneration, resource: row.resource });
     this.refreshTokens.set(row.tokenHash, row);
   }
 

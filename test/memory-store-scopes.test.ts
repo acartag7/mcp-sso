@@ -198,3 +198,38 @@ test("a reentrant refresh save cannot split a family's resource binding", async 
   assert.equal(families.get(FAMILY)?.resource, stored.resource,
     "the family binding matches the one stored row, never a stale write");
 });
+
+// Round-two reentrancy holes (hosted review round three): the snapshot must
+// also precede the binding guard and the duplicate-token guard, not only the
+// replay and family checks. A mid-spread store-instance rotation must fail the
+// outer binding, and a mid-spread same-hash nested save must hit the outer
+// uniqueness guard instead of overwriting the nested row.
+
+test("a mid-spread instance rotation fails the outer consent binding", async () => {
+  const store = new MemoryStore();
+  const instanceId = await store.getStoreInstanceId();
+  const outer = await store.commitConsentApproval(instanceId, JTI, EXPIRES_AT, authCodeInput({
+    scopes: reentrantScopes(1, () => { void store.rotateStoreInstanceId(); }),
+  }));
+  assert.equal(outer, "binding_mismatch", "the rotated id must fail the outer binding");
+  const maps = internalMaps(store);
+  assert.equal(maps.consentJtis.size, 0, "nothing is committed on a failed binding");
+  assert.equal(maps.authCodes.size, 0);
+});
+
+test("a mid-spread same-hash nested save cannot be overwritten by the outer save", async () => {
+  const store = new MemoryStore();
+  await assert.rejects(store.saveRefreshToken(refreshInput({
+    scopes: reentrantScopes(1, () => {
+      void store.saveRefreshToken(refreshInput({ familyId: "family-nested" }));
+    }),
+  })), /tokenHash already exists/);
+  const maps = internalMaps(store);
+  assert.equal(maps.refreshTokens.size, 1, "only the nested row exists");
+  const rows = (store as unknown as { refreshTokens: Map<string, { familyId: string }> }).refreshTokens;
+  const families = (store as unknown as { families: Map<string, unknown> }).families;
+  const stored = [...rows.values()][0];
+  assert.ok(stored);
+  assert.equal(stored.familyId, "family-nested");
+  assert.deepEqual([...families.keys()], ["family-nested"], "no orphan family row survives");
+});
