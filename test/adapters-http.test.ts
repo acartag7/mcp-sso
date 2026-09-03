@@ -151,3 +151,35 @@ test("authorizationOccurrences gives the distinct source the same case and type 
   assert.equal(authorizationOccurrences({ authorization: [] }), undefined,
     "an empty occurrence list is absence, which still fails closed at the verifier");
 });
+
+test("authorizationOccurrences rejects a malformed matching container, not just its elements", () => {
+  const distinctTyped = authorizationOccurrences as (d: Record<string, unknown>) => string[] | undefined;
+  assert.throws(() => distinctTyped({ Authorization: "", authorization: ["Bearer valid"] }),
+    /distinct Authorization occurrence is not a string/,
+    "a non-array matching value must throw even when its length is 0, never skip to the valid case variant");
+});
+
+test("authorizationOccurrences reads each element once and publishes the snapshot", () => {
+  let reads = 0;
+  const hostile = new Proxy(["Bearer valid"], {
+    get(target, prop, receiver) {
+      if (prop === "0") {
+        reads += 1;
+        return reads === 1 ? "Bearer valid" : new String("Bearer poisoned");
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as string[];
+  assert.deepEqual(authorizationOccurrences({ authorization: hostile }), ["Bearer valid"],
+    "the validated snapshot is what is published; the second, poisoned read never happens");
+  assert.equal(reads, 1, "each element is read exactly once");
+  const readsNormalized = { count: 0, map: {} as Record<string, string[]> };
+  readsNormalized.map.authorization = new Proxy(["Bearer valid"], {
+    get(target, prop, receiver) {
+      if (prop === "0") { readsNormalized.count += 1; return readsNormalized.count === 1 ? "Bearer valid" : "poisoned"; }
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as string[];
+  assert.deepEqual(authorizationOccurrences(undefined, readsNormalized.map), ["Bearer valid"]);
+  assert.equal(readsNormalized.count, 1, "the normalized branch reads each element once too");
+});

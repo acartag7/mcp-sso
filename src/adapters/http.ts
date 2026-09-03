@@ -95,24 +95,28 @@ export function authorizationOccurrences(
   distinct: Record<string, string[] | undefined> | undefined,
   normalized?: NormRequest["headers"],
 ): string[] | undefined {
-  if (distinct !== undefined) {
-    const occurrences: string[] = [];
-    for (const [key, values] of Object.entries(distinct)) {
-      if (key.toLowerCase() !== "authorization" || values === undefined || values.length === 0) continue;
-      if (values.every((entry) => typeof entry === "string")) occurrences.push(...values);
-      else throw new TypeError("distinct Authorization occurrence is not a string");
-    }
-    return occurrences.length > 0 ? occurrences : undefined;
-  }
-  if (normalized === undefined) return undefined;
+  const source = distinct !== undefined ? distinct : normalized;
+  if (source === undefined) return undefined;
   const occurrences: string[] = [];
-  for (const [key, value] of Object.entries(normalized)) {
-    if (key.toLowerCase() !== "authorization") continue;
-    if (typeof value === "string") occurrences.push(value);
-    else if (Array.isArray(value) && value.every((entry) => typeof entry === "string")) occurrences.push(...value);
-    else throw new TypeError("normalized Authorization occurrence is not a string");
+  const label = distinct !== undefined ? "distinct" : "normalized";
+  for (const [key, value] of Object.entries(source)) {
+    if (key.toLowerCase() !== "authorization" || value === undefined) continue;
+    if (typeof value === "string" && label === "normalized") occurrences.push(value);
+    else if (Array.isArray(value)) {
+      if (value.length > 0) occurrences.push(...validatedOccurrences(value, label));
+    } else throw new TypeError(`${label} Authorization occurrence is not a string`);
   }
   return occurrences.length > 0 ? occurrences : undefined;
+}
+
+/** Read each element exactly once, validate and publish that snapshot: an
+ *  accessor-backed array cannot show one value at validation, another at publication. */
+function validatedOccurrences(values: readonly unknown[], source: string): string[] {
+  const snapshot: unknown[] = [...values];
+  if (!snapshot.every((entry) => typeof entry === "string")) {
+    throw new TypeError(`${source} Authorization occurrence is not a string`);
+  }
+  return snapshot as string[];
 }
 
 export function readHeader(headers: NormRequest["headers"], name: string): HeaderRead {
