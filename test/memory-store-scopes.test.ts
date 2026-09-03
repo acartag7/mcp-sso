@@ -194,6 +194,7 @@ test("a reentrant refresh save cannot split a family's resource binding", async 
   const rows = (store as unknown as { refreshTokens: Map<string, { resource: string }> }).refreshTokens;
   const families = (store as unknown as { families: Map<string, { resource: string }> }).families;
   const stored = [...rows.values()][0];
+  assert.ok(stored, "one row is stored");
   assert.equal(families.get(FAMILY)?.resource, stored.resource,
     "the family binding matches the one stored row, never a stale write");
 });

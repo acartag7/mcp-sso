@@ -50,10 +50,8 @@ export class MemoryStore implements StorePort {
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
     validateAuthCode(authCode);
     if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
-    // Materialize the complete record BEFORE the guards: the scopes spread runs
-    // caller code, so any later placement lets a reentrant iterable fire a
-    // nested commit between the replay check and the write, storing two codes
-    // for one consent JTI.
+    // Materialize before the guards: the scopes spread runs caller code, and a
+    // reentrant iterable could nest a commit past the replay check otherwise.
     const stored = {
       ...authCode, scopes: [...authCode.scopes], grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
     };
@@ -100,10 +98,8 @@ export class MemoryStore implements StorePort {
     // the SQL stores' PRIMARY KEY rejection).
     if (this.refreshTokens.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
     const grantGeneration = grantGenerationForWrite(input.grantGeneration);
-    // Materialize the row BEFORE reading token/family state: the scopes spread
-    // runs caller code, so any later placement lets a reentrant iterable fire a
-    // nested save between the family check and the writes, binding the outer
-    // row to a stale family result.
+    // Materialize before reading token/family state: the scopes spread runs
+    // caller code, and a reentrant iterable could nest a save past the check.
     const row = { ...input, scopes: [...input.scopes], grantGeneration, consumedAt: null };
     const family = this.families.get(input.familyId);
     if (family && (family.grantGeneration !== grantGeneration || family.resource !== input.resource)) {
