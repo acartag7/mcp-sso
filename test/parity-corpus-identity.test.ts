@@ -67,8 +67,8 @@ async function expectCloneError(
 test("loadCorpus accepts all four real 8.4 fixtures", async () => {
   const fixtures = await loadCorpus();
   assert.deepEqual(fixtures.map(({ id, profile, status }) => [id, profile, status]).toSorted(), [
-    [REAL_IDS[1], "host", "draft"],
-    [REAL_IDS[0], "portable", "draft"],
+    [REAL_IDS[1], "host", "frozen"],
+    [REAL_IDS[0], "portable", "frozen"],
     [REAL_IDS[2], "portable", "draft"],
     [REAL_IDS[3], "portable", "draft"],
   ]);

@@ -9,17 +9,15 @@ schema/fixture.schema.json   the shape every fixture must satisfy (JSON Schema 2
 keys/                        corpus-only key material (generated for the corpus, never reused)
 <NN>-<section-slug>/         one directory per numbered contract section
   <clause>-<slug>.json       one fixture, one contract clause
-MANIFEST.json                corpus version, hash of every frozen fixture, clause coverage map
-CATALOGUE.md                 generated human index: id, clause, what you get, receipt
 FREEZE-LOG.md                every change to a frozen fixture, with the contract change that required it
 ```
 
 ## Rules in one screen
 
-- A fixture pins one contract clause and quotes the complete sentence that it tests. Rewording the sentence makes the quote stale. `MANIFEST.json` lists every clause in §05–§17 and records its evidence or marks it uncovered.
-- Set `kind` to `fixture` for one real HTTP request or `boot` for exact startup acceptance or rejection. A clause covered by an executable suite uses a suite receipt in `MANIFEST.json`; no clause is exempt from the map.
+- A fixture pins one contract clause and quotes the complete sentence that it tests, copied verbatim. Rewording the clause makes the quote stale and nothing detects that. Coverage is derived from the frozen fixtures themselves, so a clause with none is uncovered.
+- Set `kind` to `fixture` for one real HTTP request or `boot` for exact startup acceptance or rejection. A clause covered by an executable suite uses a suite receipt in the contract section that cites it; no clause is exempt.
 - Label each fixture `portable` or `host`. Portable fixtures count toward cross-implementation parity. Host fixtures cover the TypeScript reference envelope and do not count toward another implementation's parity claim.
-- Keep a fixture `draft` until the reference implementation's runner passes it unchanged. Freeze it only with a `receipt` that names the implementation, version, commit, and date.
+- Keep a fixture `draft` until the reference implementation's runner passes it unchanged in CI. Freeze it only with a `receipt` naming the implementation, version, date, and that CI commit. Nothing but review holds frozen bytes afterwards, so review a fixture hunk as closely as a `src/` hunk.
 - One HTTP fixture, one request. A flow is a declared chain whose pre-state is the previous fixture's expected post-state. A named capture can carry an emitted string into a later step without pinning nondeterministic ES256 bytes.
 - Write every request body as exactly one of `json`, ordered `form` fields, or verbatim `text`. The runner supplies no encoding or Content-Type default.
 - Do not duplicate a server-side scenario that the frozen official MCP conformance requirement set scores. The `2026-07-28` set scores no OAuth resource-server or authorization-server scenario, so it excludes none of the current corpus.
@@ -34,4 +32,5 @@ FREEZE-LOG.md                every change to a frozen fixture, with the contract
 
 ## Status
 
-Bootstrap. Four `draft` fixtures exist for clause 8.4, covering its three input classes, and the reference runner executes all of them in CI: each portable draft on Fastify, Express, and Hono, and the host draft on Fastify. No `MANIFEST.json`, frozen fixture, parity evidence, or official-suite receipt exists yet. See §19.11.
+Bootstrap. Four fixtures exist for clause 8.4, covering its three input classes: the original two are `frozen` with receipts, and the exactly-one and zero-occurrence additions are `draft` until a main commit whose CI ran them unchanged exists. The reference runner executes all of them in CI: each portable fixture on Fastify, Express, and Hono, and the host fixture on Fastify. No `MANIFEST.json`, further parity evidence, or official-suite receipt exists yet. See §19.11.
+

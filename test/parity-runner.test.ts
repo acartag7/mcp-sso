@@ -284,7 +284,12 @@ test("the section 8.4 fixtures load with bound ids and clauses", async () => {
     const fixture = corpus.find((candidate) => candidate.id === id);
     assert.ok(fixture, `${id} missing from the corpus`);
     assert.equal(fixture.kind, "fixture");
-    assert.equal(fixture.status, "draft");
+    // The original pair froze in the manifest-replacement pull request; the
+    // two input-class additions stay draft until their own freeze flip.
+    const expected = id.includes("single-authorization") || id.includes("zero-authorization")
+      ? "draft"
+      : "frozen";
+    assert.equal(fixture.status, expected);
     assert.equal(fixture.contract.section, "08");
     assert.equal(fixture.contract.clause, "8.4");
   }

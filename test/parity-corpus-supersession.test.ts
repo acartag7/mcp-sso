@@ -61,7 +61,7 @@ test("loadCorpus accepts a real active fixture copied into a temporary corpus", 
   const activeId = fixtureId("active-real");
   await withCorpus([{ id: activeId }], async (root) => {
     const fixtures = await loadCorpus(root);
-    assert.deepEqual(fixtures.map(({ id, status }) => [id, status]), [[activeId, "draft"]]);
+    assert.deepEqual(fixtures.map(({ id, status }) => [id, status]), [[activeId, "frozen"]]);
   });
 });
 
@@ -74,7 +74,7 @@ test("loadCorpus accepts superseded fixture pointing to a loaded active replacem
   ], async (root) => {
     const fixtures = await loadCorpus(root);
     assert.deepEqual(fixtures.map(({ id, status }) => `${id}:${status}`).toSorted(), [
-      `${replacementId}:draft`, `${supersededId}:superseded`,
+      `${replacementId}:frozen`, `${supersededId}:superseded`,
     ]);
   });
 });

@@ -13,3 +13,7 @@ This file is append-only. Each entry records a change to a frozen fixture or a b
 ## 2026-08-31 request-body encoding correction
 
 `08-resource-server-verifier/8.4-duplicate-authorization-fails-closed` remained `draft`. Its JSON request body gained the explicit `json` wrapper required by the request-body encoding contract. The serialized request bytes and expected response did not change. No frozen hash or receipt existed, so this change did not unfreeze evidence.
+
+## 2026-09-02 first freeze
+
+`08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable` and `08-resource-server-verifier/8.4-duplicate-authorization-fails-closed` left `draft` and became the first frozen fixtures, under the §19.4 record amended in the same pull request: receipt, freeze-log entry, and reviewed pull request, with no manifest and no hash lock. The reference runner passed both on `63ed98774c5bbbdd486e1aa9f878c194ca7f1ea3` through Fastify, Express, and Hono (portable) and Fastify (host) with zero skips. Receipts: implementation mcp-sso, version 0.5.0. The executable content of both fixtures is byte-identical to that commit; only `status`, `receipt`, and the host fixture's `notes` changed, the last to drop a sentence calling the fixture a draft. No `given`, `when`, or `then` member changed.

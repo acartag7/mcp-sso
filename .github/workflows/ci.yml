@@ -121,6 +121,4 @@ jobs:
             fixtures/08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable.json,
             fixtures/keys/signing-private.pem,
             fixtures/keys/signing-public.pem,
-            fixtures/MANIFEST.json,
-            fixtures/CATALOGUE.md,
             fixtures/FREEZE-LOG.md

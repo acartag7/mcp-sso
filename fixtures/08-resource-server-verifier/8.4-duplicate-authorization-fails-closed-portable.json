@@ -7,7 +7,13 @@
     "clause": "8.4",
     "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
   },
-  "status": "draft",
+  "status": "frozen",
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "63ed98774c5bbbdd486e1aa9f878c194ca7f1ea3",
+    "date": "2026-09-02"
+  },
   "notes": "The protected-resource metadata URL accepts the origin-root form and the route-scoped form. The matcher pins the Bearer scheme, scope, error, and resource binding. It leaves the optional error_description text unpinned. Both bearer values are independently valid corpus-signed tokens for this issuer, resource, and clock. Selecting either reaches the protected handler and returns 204, so only rejection before first/last selection can satisfy the expected 401.",
   "given": {
     "config": {

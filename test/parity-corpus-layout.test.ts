@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { FixtureRunnerError } from "./parity/error.ts";
 import { FIXTURES_ROOT, fixturePaths } from "./parity/corpus.ts";
 
-const ROOT_FILES = ["README.md", "FREEZE-LOG.md", "MANIFEST.json", "CATALOGUE.md"];
+const ROOT_FILES = ["README.md", "FREEZE-LOG.md"];
 const ROOT_DIRECTORIES = ["keys", "schema"];
 
 async function temporaryRoot(): Promise<string> {
@@ -38,7 +38,7 @@ test("discovers exactly the four real fixture paths", async () => {
   ]);
 });
 
-test("allows the six reserved root artifacts only at their declared types", async () => {
+test("allows the four reserved root artifacts only at their declared types", async () => {
   const root = await temporaryRoot();
   try {
     for (const name of ROOT_FILES) await writeFile(join(root, name), "artifact", "utf8");
@@ -74,6 +74,8 @@ test("allows the six reserved root artifacts only at their declared types", asyn
 test("rejects misplaced fixtures and misspelled or malformed section directories", async () => {
   const cases = [
     ["8.4-misplaced-fixture.json", "file"],
+    ["MANIFEST.json", "file"],
+    ["CATALOGUE.md", "file"],
     ["resource-server-verifier", "directory"],
     ["8-resource-server-verifier", "directory"],
     ["20-resource-server-verifier", "directory"],
