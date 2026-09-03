@@ -124,3 +124,14 @@ test("authorizationOccurrences fails closed on case-duplicated normalized keys",
   assert.deepEqual(authorizationOccurrences({ authorization: ["Bearer distinct"] }, { Authorization: "Bearer ignored" }),
     ["Bearer distinct"], "a present distinct source is authoritative");
 });
+
+test("authorizationOccurrences rejects a malformed duplicate instead of dropping it", () => {
+  const typed = authorizationOccurrences as (d: undefined, n: Record<string, unknown>) => string[] | undefined;
+  assert.throws(() => typed(undefined, { Authorization: 7, authorization: "Bearer valid" }),
+    /normalized Authorization occurrence is not a string/,
+    "a non-string case-variant duplicate must not be silently dropped to leave the valid credential a singleton");
+  assert.throws(() => typed(undefined, { authorization: ["Bearer valid", 7] }),
+    /normalized Authorization occurrence is not a string/);
+  assert.deepEqual(typed(undefined, { "content-type": 7, authorization: "Bearer valid" }), ["Bearer valid"],
+    "malformed values under other keys are none of this boundary's business");
+});
