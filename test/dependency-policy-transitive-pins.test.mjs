@@ -48,6 +48,10 @@ test("a young transitive pin without an advisory exception still fails the age f
   const { youngPublished } = await makeTransitivePinYoung(root);
   await assert.rejects(
     verifyLocalDependencyPolicy(root, NOW),
-    new RegExp(`fast-uri: ${youngPublished.replace(/[.]/g, "\\.")} is younger than 15 days`),
+    (error) => {
+      assert.match(error.message, /^- fast-uri: .* is younger than 15 days$/m);
+      assert.ok(error.message.includes(`fast-uri: ${youngPublished} `));
+      return true;
+    },
   );
 });
