@@ -48,21 +48,24 @@ export class MemoryStore implements StorePort {
     this.ensureOpen();
     assertStoreInstanceId(expectedStoreInstanceId);
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
-    validateAuthCode(authCode);
+    // Snapshot ALL caller-controlled data first: property reads and the scopes
+    // spread run caller code, and reentrant data (an iterator that calls back
+    // into the store, or hostile getters) must never interleave with a guard.
+    const snapshot = { ...authCode, scopes: [...authCode.scopes] };
+    validateAuthCode(snapshot);
+    const stored = { ...snapshot, grantGeneration: grantGenerationForWrite(snapshot.grantGeneration) };
     if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
     if (this.consentJtis.has(jti)) return "replayed";
     if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return "replayed";
     this.consentJtis.set(jti, expiresAtIso);
-    this.authCodes.set(authCode.codeHash, {
-      ...authCode, grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
-    });
+    this.authCodes.set(stored.codeHash, stored);
     return "stored";
   }
 
   async saveAuthCode(input: SaveAuthCodeInput): Promise<void> {
     this.ensureOpen();
     validateAuthCode(input);
-    this.authCodes.set(input.codeHash, { ...input, grantGeneration: grantGenerationForWrite(input.grantGeneration) });
+    this.authCodes.set(input.codeHash, { ...input, scopes: [...input.scopes], grantGeneration: grantGenerationForWrite(input.grantGeneration) });
   }
 
   async consumeAuthCode(codeHash: string, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<AuthCodeRecord | null> {
@@ -88,19 +91,22 @@ export class MemoryStore implements StorePort {
 
   async saveRefreshToken(input: SaveRefreshTokenInput): Promise<void> {
     this.ensureOpen();
-    input = normalizeRefreshTokenWrite(input);
+    // Snapshot ALL caller-controlled data first, as commitConsentApproval does.
+    const snapshot = { ...input, scopes: [...input.scopes] };
+    input = normalizeRefreshTokenWrite(snapshot);
     validateRefreshToken(input);
+    const grantGeneration = grantGenerationForWrite(input.grantGeneration);
+    const row = { ...input, grantGeneration, consumedAt: null };
     // §12.2 invariant 8: never silently overwrite — an overwrite would rebuild
     // the row with consumedAt:null, resurrecting a consumed token (parity with
     // the SQL stores' PRIMARY KEY rejection).
-    if (this.refreshTokens.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
-    const grantGeneration = grantGenerationForWrite(input.grantGeneration);
-    const family = this.families.get(input.familyId);
-    if (family && (family.grantGeneration !== grantGeneration || family.resource !== input.resource)) {
+    if (this.refreshTokens.has(row.tokenHash)) throw new StoreInputError("tokenHash already exists");
+    const family = this.families.get(row.familyId);
+    if (family && (family.grantGeneration !== grantGeneration || family.resource !== row.resource)) {
       throw new StoreInputError("family grantGeneration or resource mismatch");
     }
-    if (!family) this.families.set(input.familyId, { revokedAt: null, grantGeneration, resource: input.resource });
-    this.refreshTokens.set(input.tokenHash, { ...input, grantGeneration, consumedAt: null });
+    if (!family) this.families.set(row.familyId, { revokedAt: null, grantGeneration, resource: row.resource });
+    this.refreshTokens.set(row.tokenHash, row);
   }
 
   async rotateRefreshToken(tokenHash: string, next: SaveRefreshTokenInput, nowIso: string, expectedGrantGeneration?: number, expectedResource?: string): Promise<RefreshTokenRecord | null> {
@@ -209,10 +215,11 @@ export function createMemoryStore(): MemoryStore {
   return new MemoryStore();
 }
 
+/** Stored rows own their scopes array so a caller keeps no handle into the store. */
 function toRecord(stored: StoredRefresh): RefreshTokenRecord {
   return {
     tokenHash: stored.tokenHash, familyId: stored.familyId, previousTokenHash: stored.previousTokenHash,
-    clientId: stored.clientId, subject: stored.subject, resource: stored.resource, scopes: stored.scopes,
+    clientId: stored.clientId, subject: stored.subject, resource: stored.resource, scopes: [...stored.scopes],
     expiresAt: stored.expiresAt, grantGeneration: stored.grantGeneration,
   };
 }

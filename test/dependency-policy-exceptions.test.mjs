@@ -9,11 +9,15 @@ import {
 import {
   makeHonoExceptionYoung,
   makeTransitiveException,
+  FAST_URI_PIN,
   fixture,
   NOW,
   replace,
   ROOT,
 } from "./dependency-policy-fixtures.mjs";
+
+/** Any stable version that is not the recorded pin, for adopted-vs-resolved drift. */
+const DRIFT_VERSION = "9.9.9";
 
 test("a recorded advisory exception bypasses the floor only for its exact package pin", async () => {
   const root = await fixture();
@@ -30,10 +34,10 @@ test("a transitive advisory exception binds to a single lockfile resolution", as
 
   await t.test("adopted version drift from the lockfile resolution", async () => {
     const root = await fixture();
-    await makeTransitiveException(root, { version: "3.1.6", lockfileVersion: "3.1.5" });
+    await makeTransitiveException(root, { version: DRIFT_VERSION, lockfileVersion: FAST_URI_PIN });
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
-      /fast-uri: adopted version 3\.1\.6 != lockfile resolution 3\.1\.5/,
+      new RegExp(`fast-uri: adopted version ${DRIFT_VERSION} != lockfile resolution ${FAST_URI_PIN}`),
     );
   });
 
@@ -98,7 +102,7 @@ test("a transitive advisory exception binds to a single lockfile resolution", as
       await makeTransitiveException(root);
       await replace(
         join(root, "pnpm-lock.yaml"),
-        "  fast-uri@3.1.5: {}",
+        `  fast-uri@${FAST_URI_PIN}: {}`,
         "  'evil-alias@npm:fast-uri@3.1.2': {}",
       );
       await assert.rejects(
@@ -112,7 +116,7 @@ test("a transitive advisory exception binds to a single lockfile resolution", as
       await makeTransitiveException(root);
       await replace(
         join(root, "pnpm-lock.yaml"),
-        "  fast-uri@3.1.5:\n",
+        `  fast-uri@${FAST_URI_PIN}:\n`,
         "  'evil-alias@npm:fast-uri@3.1.2': {resolution: {integrity: sha512-x}}\n",
       );
       await assert.rejects(
