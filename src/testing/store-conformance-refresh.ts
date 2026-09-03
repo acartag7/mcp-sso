@@ -7,7 +7,32 @@ import { StoreInputError, UNBOUND_REFRESH_RESOURCE } from "../ports/store.ts";
 import type { SaveRefreshTokenInput } from "../ports/store.ts";
 import { FUTURE, LATER, NOW, RESOURCE_A, RESOURCE_B, refresh, sha256Hex, type MakeStore, type StoreConformanceOptions, } from "./store-conformance-fixtures.ts";
 
+
 export function registerRefreshRows(label: string, make: MakeStore, _options: StoreConformanceOptions = {}): void {
+  // §12.2 invariant 13: stored rows own their scopes array on write, on read, and across rotation.
+  test(`${label}: stored refresh rows own their scopes array on write, on read, and across rotation`, async () => {
+    const store = await make();
+    const input = refresh("detached-refresh", "detached-family", null, FUTURE);
+    const callerScopes = input.scopes;
+    await store.saveRefreshToken(input);
+    callerScopes.push("mcp:late");
+    const found = await store.findRefreshToken(input.tokenHash);
+    assert.ok(found, "the token was stored");
+    assert.deepEqual(found.scopes, ["mcp:read"], "caller mutation after save must not reach the stored token");
+    found.scopes.push("mcp:late");
+    const again = await store.findRefreshToken(input.tokenHash);
+    assert.deepEqual(again?.scopes, ["mcp:read"], "mutating a returned record must not reach the stored token");
+
+    const predecessor = await store.rotateRefreshToken(input.tokenHash,
+      refresh("detached-successor", "detached-family", input.tokenHash, FUTURE), NOW);
+    assert.ok(predecessor, "rotation succeeded");
+    predecessor.scopes.push("mcp:late");
+    const successor = await store.findRefreshToken(sha256Hex("detached-successor"));
+    assert.deepEqual(successor?.scopes, ["mcp:read"], "mutating the predecessor must not reach the successor");
+    const predecessorAgain = await store.findRefreshToken(input.tokenHash);
+    assert.deepEqual(predecessorAgain?.scopes, ["mcp:read"], "mutating the predecessor must not reach the stored row");
+    await store.close();
+  });
   test(`${label}: rotates refresh tokens and replay revokes the family`, async () => {
     const store = await make();
     await store.saveRefreshToken(refresh("one", "fam-1", null, FUTURE));

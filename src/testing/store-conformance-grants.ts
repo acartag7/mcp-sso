@@ -45,6 +45,31 @@ export function registerGrantRows(label: string, make: MakeStore, _options: Stor
     await store.close();
   });
 
+  // §12.2 invariant 13: stored rows own their scopes array on write and on read.
+  test(`${label}: stored rows own their scopes array against the caller and the returned record`, async () => {
+    const store = await make();
+    const input = authCode("detached-auth-code", FUTURE);
+    const callerScopes = input.scopes;
+    await store.saveAuthCode(input);
+    callerScopes.push("mcp:late");
+    const consumed = await store.consumeAuthCode(input.codeHash, NOW);
+    assert.ok(consumed, "the code was stored");
+    assert.deepEqual(consumed.scopes, ["mcp:read"], "caller mutation after save must not reach the stored code");
+    consumed.scopes.push("mcp:late");
+    assert.equal(await store.consumeAuthCode(input.codeHash, NOW), null, "single-use semantics unchanged");
+
+    const binding = await store.getStoreInstanceId();
+    const consentInput = authCode("detached-consent-code", FUTURE);
+    const consentScopes = consentInput.scopes;
+    assert.equal(
+      await store.commitConsentApproval(binding, "detached-consent-jti", FUTURE, consentInput), "stored");
+    consentScopes.push("mcp:late");
+    const consented = await store.consumeAuthCode(consentInput.codeHash, NOW);
+    assert.ok(consented, "the consented code was stored");
+    assert.deepEqual(consented.scopes, ["mcp:read"], "caller mutation after consent must not reach the stored code");
+    await store.close();
+  });
+
   test(`${label}: stored-DCR generation rejects and burns legacy auth codes`, async () => {
     const store = await make();
     assert.equal(store.storedDcrGrantGeneration, STORED_DCR_GRANT_GENERATION);
