@@ -103,7 +103,10 @@ export function authorizationOccurrences(
     if (key.toLowerCase() !== "authorization" || value === undefined) continue;
     if (typeof value === "string" && label === "normalized") occurrences.push(value);
     else if (Array.isArray(value)) {
-      if (value.length > 0) occurrences.push(...validatedOccurrences(value, label));
+      // Snapshot first; the snapshot's own length is the emptiness decision,
+      // never a proxy-controlled length read before publication.
+      const snapshot = validatedOccurrences(value, label);
+      if (snapshot.length > 0) occurrences.push(...snapshot);
     } else throw new TypeError(`${label} Authorization occurrence is not a string`);
   }
   return occurrences.length > 0 ? occurrences : undefined;
@@ -112,7 +115,10 @@ export function authorizationOccurrences(
 /** Read each element exactly once, validate and publish that snapshot: an
  *  accessor-backed array cannot show one value at validation, another at publication. */
 function validatedOccurrences(values: readonly unknown[], source: string): string[] {
-  const snapshot: unknown[] = [...values];
+  // Object.values reads each own element exactly once and never consults a
+  // length the input could lie about, so a faked-empty array still publishes
+  // its present elements and a lying-large one adds nothing.
+  const snapshot: unknown[] = Object.values(values);
   if (!snapshot.every((entry) => typeof entry === "string")) {
     throw new TypeError(`${source} Authorization occurrence is not a string`);
   }

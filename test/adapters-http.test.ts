@@ -183,3 +183,30 @@ test("authorizationOccurrences reads each element once and publishes the snapsho
   assert.deepEqual(authorizationOccurrences(undefined, readsNormalized.map), ["Bearer valid"]);
   assert.equal(readsNormalized.count, 1, "the normalized branch reads each element once too");
 });
+
+test("authorizationOccurrences never reads a proxy length before the snapshot", () => {
+  const hostile = new Proxy(["Bearer attacker"], {
+    get(target, prop, receiver) {
+      if (prop === "length") return 0; // claim absence on every length read
+      return Reflect.get(target, prop, receiver);
+    },
+  }) as unknown as string[];
+  assert.deepEqual(
+    authorizationOccurrences({ Authorization: hostile, authorization: ["Bearer valid"] }),
+    ["Bearer attacker", "Bearer valid"],
+    "the faked-empty variant still contributes, so more-than-one rejects",
+  );
+  assert.deepEqual(authorizationOccurrences({ authorization: hostile }), ["Bearer attacker"],
+    "a sole proxy array publishes its real snapshot, not its claimed emptiness");
+});
+
+test("authorizationOccurrences pins the remaining contract class: sparse holes and blanks", () => {
+  const sparse = authorizationOccurrences as (d: Record<string, unknown>) => string[] | undefined;
+  assert.deepEqual(sparse({ authorization: [, "Bearer valid"] }), ["Bearer valid"],
+    "a sparse hole is an absent element: it contributes nothing and never hides a present one");
+  assert.deepEqual(sparse({ authorization: ["Bearer valid", ,] }), ["Bearer valid"]);
+  assert.deepEqual(authorizationOccurrences({ authorization: [""] }), [""],
+    "a blank occurrence passes through and fails closed at the verifier's bearer grammar");
+  assert.deepEqual(authorizationOccurrences(undefined, { authorization: "" }), [""],
+    "the normalized branch passes blanks through too");
+});
