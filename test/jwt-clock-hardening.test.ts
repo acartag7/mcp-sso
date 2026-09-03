@@ -535,7 +535,7 @@ test("RequestAuthorizer fails closed on the zero- and many-element authorization
     authorizer.authorize({ authorization: [] }),
     (error) => {
       assert.ok(isOAuth("invalid_token", 401)(error));
-      assert.match(error.message, /must occur exactly once/,
+      assert.match(String((error as Error).message), /must occur exactly once/,
         "the zero-element array takes the ambiguity rejection, not the absent-header one");
       return true;
     },
