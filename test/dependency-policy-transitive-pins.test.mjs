@@ -15,10 +15,10 @@ test("ordinary transitive pin binds the workspace override and lockfile resoluti
 test("ordinary transitive pin rejects a disconnected workspace override", async () => {
   const root = await fixture();
   await replace(join(root, "pnpm-workspace.yaml"), `  fast-uri: ${FAST_URI_PIN}\n`, "");
-  await assert.rejects(
-    verifyLocalDependencyPolicy(root, NOW),
-    new RegExp(`fast-uri: workspace override undefined != transitive pin ${FAST_URI_PIN}`),
-  );
+  await assert.rejects(verifyLocalDependencyPolicy(root, NOW), (error) => {
+    assert.ok(error.message.includes(`fast-uri: workspace override undefined != transitive pin ${FAST_URI_PIN}`));
+    return true;
+  });
 });
 
 test("ordinary transitive pin rejects a stale lockfile resolution", async () => {
@@ -26,10 +26,10 @@ test("ordinary transitive pin rejects a stale lockfile resolution", async () => 
   const lockfile = join(root, "pnpm-lock.yaml");
   await replace(lockfile, `  fast-uri@${FAST_URI_PIN}:\n`, `  fast-uri@${STALE_VERSION}:\n`);
   await replace(lockfile, `  fast-uri@${FAST_URI_PIN}: {}`, `  fast-uri@${STALE_VERSION}: {}`);
-  await assert.rejects(
-    verifyLocalDependencyPolicy(root, NOW),
-    new RegExp(`fast-uri: lockfile resolutions ${STALE_VERSION} != transitive pin ${FAST_URI_PIN}`),
-  );
+  await assert.rejects(verifyLocalDependencyPolicy(root, NOW), (error) => {
+    assert.ok(error.message.includes(`fast-uri: lockfile resolutions ${STALE_VERSION} != transitive pin ${FAST_URI_PIN}`));
+    return true;
+  });
 });
 
 // Ledger rule 2: "Published-advisory fixes do not wait", for a package this
