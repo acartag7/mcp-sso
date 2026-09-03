@@ -50,7 +50,7 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 | [`jsonc-parser`](https://github.com/microsoft/node-jsonc-parser) | `3.3.1` | 2024-06-24 | ✅ | Strict parity-fixture JSON parsing with duplicate object-member detection before schema validation. |
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | ✅ | The official MCP SDK, used by end-to-end tests and every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dependency of the mcp-sso package itself. |
 | [`@fastify/rate-limit`](https://github.com/fastify/fastify-rate-limit) | `11.2.0` | 2026-07-29 | ✅ | Real fail-closed `/mcp` middleware for the Fastify examples, generated starter, and isolated helper subpath. Also an optional peer. Not loaded by the root/core entry. |
-| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | ✅ | Reference framework adapter, dev/test + optional peer. |
+| [`fastify`](https://fastify.dev/) | `5.12.1` | 2026-08-18 | ✅ | Reference framework adapter, dev/test + optional peer. |
 | [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | ✅ | Framework adapter, dev/test + optional peer. |
 | [`hono`](https://hono.dev/) | `4.12.34` | 2026-08-03 | Advisory exception | Framework adapter, dev/test + optional peer. The minimum version fixing the recorded published advisories. |
 | [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | ✅ | Express typings (dev only). |
@@ -144,7 +144,7 @@ The following block is the machine-readable source used by `check:deps`. The hum
     "ajv": { "version": "8.20.0", "published": "2026-04-24T15:22:16.529Z" },
     "ajv-formats": { "version": "3.0.1", "published": "2024-03-30T11:30:26.728Z" },
     "express": { "version": "5.2.1", "published": "2025-12-01T20:49:43.268Z" },
-    "fastify": { "version": "5.8.5", "published": "2026-04-14T12:07:12.232Z" },
+    "fastify": { "version": "5.12.1", "published": "2026-08-18T19:51:15.791Z" },
     "hono": { "version": "4.12.34", "published": "2026-08-03T02:36:40.543Z" },
     "ioredis": { "version": "5.11.1", "published": "2026-06-04T10:14:59.752Z" },
     "jsonc-parser": { "version": "3.3.1", "published": "2024-06-24T21:12:45.445Z" },
