@@ -122,7 +122,7 @@
   },
   "peerDependencies": {
     "@fastify/rate-limit": ">=11.2.0 <12",
-    "fastify": ">=5",
+    "fastify": ">=5.12.1",
     "express": ">=5",
     "hono": ">=4.12.34 <5",
     "mysql2": ">=3",
