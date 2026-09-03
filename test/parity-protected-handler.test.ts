@@ -110,7 +110,8 @@ test("normalized headers alone carry the bearer and the Origin when distinct is 
     normalized: { authorization: READ_TOKEN, origin: ISSUER }, authorizer: spy.authorizer,
   });
   assert.equal(admitted.status, 200);
-  assert.deepEqual(spy.calls.map((call) => call.authorization), [READ_TOKEN]);
+  assert.deepEqual(spy.calls.map((call) => call.authorization), [[READ_TOKEN]],
+    "a normalized single occurrence reaches the authorizer as a one-element array");
   for (const origin of [`${ISSUER}, ${LISTED_ORIGIN}`, "https://evil.example.com"]) {
     const refused = await run({ normalized: { authorization: READ_TOKEN, origin } });
     assert.equal(refused.status, 403);
@@ -247,4 +248,16 @@ test("a success header value carrying CR or LF fails the run", async () => {
       (error: unknown) => error instanceof FixtureRunnerError && /CR or LF/.test(error.message),
     );
   }
+});
+
+// §8.4: shipped roots hand RequestAuthorizer the raw occurrence array. The
+// host must deliver the same boundary, so a one-occurrence request reaches the
+// authorizer as a one-element array, never the scalar a normalized header map
+// holds. Without this, a fixture's single-occurrence success pins the scalar
+// path and an implementation rejecting one-element arrays still passes.
+test("a single occurrence reaches the authorizer as a one-element array", async () => {
+  const spy = spyOn(authorizer);
+  await run({ distinct: AUTHORIZED, authorizer: spy.authorizer });
+  await run({ normalized: { authorization: READ_TOKEN }, authorizer: spy.authorizer });
+  assert.deepEqual(spy.calls.map((call) => call.authorization), [[READ_TOKEN], [READ_TOKEN]]);
 });

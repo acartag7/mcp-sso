@@ -50,7 +50,7 @@ export async function protectedOutcome(input: ProtectedOutcomeInput): Promise<Ho
   if (originRejected(headers, config)) return jsonRpcOutcome(403, ORIGIN_REJECTED);
   try {
     await authorizer.authorize({
-      authorization: headers.authorization,
+      authorization: authorizationInput(input),
       ...protectedResource.requiredScope === null
         ? {}
         : { requiredScope: protectedResource.requiredScope },
@@ -66,6 +66,22 @@ export async function protectedOutcome(input: ProtectedOutcomeInput): Promise<Ho
     headers: responseHeaders,
     body: encodeResponseBody(success.body, responseHeaders),
   };
+}
+
+/** §8.4: every shipped composition root passes the raw Authorization
+ *  occurrence array into RequestAuthorizer, never a framework's normalized
+ *  first value. Deliver that boundary here too: a one-occurrence request
+ *  reaches the authorizer as a one-element array, which is the exact input
+ *  class the verifier's array rule names, instead of the scalar
+ *  headersFromDistinct produces for a single occurrence. */
+function authorizationInput(input: ProtectedOutcomeInput): string | string[] | undefined {
+  if (input.distinct !== undefined) {
+    const values = input.distinct.authorization;
+    return values !== undefined && values.length > 0 ? [...values] : undefined;
+  }
+  const normalized = input.normalized?.authorization;
+  if (normalized === undefined) return undefined;
+  return Array.isArray(normalized) ? normalized : [normalized];
 }
 
 /** Read the mount's headers through the library's own precedence: `distinct`

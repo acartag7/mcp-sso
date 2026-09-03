@@ -34,4 +34,4 @@ FREEZE-LOG.md                every change to a frozen fixture, with the contract
 
 ## Status
 
-Bootstrap. Two `draft` fixtures exist, and the reference runner executes them in CI: the portable draft on Fastify, Express, and Hono, and the host draft on Fastify. No `MANIFEST.json`, frozen fixture, parity evidence, or official-suite receipt exists yet. See §19.11.
+Bootstrap. Four `draft` fixtures exist for clause 8.4, covering its three input classes, and the reference runner executes all of them in CI: each portable draft on Fastify, Express, and Hono, and the host draft on Fastify. No `MANIFEST.json`, frozen fixture, parity evidence, or official-suite receipt exists yet. See §19.11.

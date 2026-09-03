@@ -8,7 +8,7 @@
     "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
   },
   "status": "draft",
-  "notes": "Exactly-one input class of the quoted sentence. A single valid corpus-signed bearer occurrence is processed as the bearer value and reaches the protected handler, returning its declared 204. An implementation that rejects every array-valued authorization fails here, closing the gap the more-than-one fixture alone leaves.",
+  "notes": "Exactly-one input class of the quoted sentence. The runner delivers the single occurrence to RequestAuthorizer as a one-element array, the same raw-occurrence boundary every shipped composition root uses (the host does not collapse it to the scalar a normalized header map would), so an implementation that accepts scalar authorization but rejects a one-element array fails here, as does one that rejects every bearer request. Reaches the protected handler and returns its declared 204.",
   "given": {
     "config": {
       "issuer": "https://api.example.com",

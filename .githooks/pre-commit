@@ -66,6 +66,8 @@ fixtures/README.md,\
 fixtures/schema/fixture.schema.json,\
 fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable.json,\
 fixtures/08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json,\
+fixtures/08-resource-server-verifier/8.4-single-authorization-succeeds-portable.json,\
+fixtures/08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable.json,\
 fixtures/keys/signing-private.pem,\
 fixtures/keys/signing-public.pem,\
 fixtures/MANIFEST.json,\
