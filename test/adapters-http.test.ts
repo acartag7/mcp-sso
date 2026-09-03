@@ -175,7 +175,7 @@ test("authorizationOccurrences reads each element once and publishes the snapsho
 test("authorizationOccurrences ignores a lying length without trusting a Proxy", () => {
   // A non-Proxy subclass with a lying length getter keeps honest own keys, so
   // its present elements still publish and emptiness comes from the snapshot.
-  class LyingLength extends Array { get length() { return 0; } }
+  class LyingLength extends Array<string> { override get length(): number { return 0; } }
   const lying = new LyingLength() as unknown as string[];
   lying.push("Bearer attacker");
   assert.deepEqual(

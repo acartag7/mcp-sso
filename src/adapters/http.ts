@@ -76,22 +76,12 @@ export function headersFromDistinct(
 }
 
 /** Snapshot one case-insensitive normalized header without selecting a duplicate. */
-/** §8.4 raw-occurrence boundary: every shipped `/mcp` composition root passes
- *  the raw Authorization occurrence array into RequestAuthorizer, never a
- *  framework's normalized first value. One occurrence arrives as a one-element
- *  array, distinct occurrences as a longer array, absence as undefined. Source
- *  precedence matches headersFromDistinct: `distinct` when present (Node's
- *  headersDistinct is canonically lower-cased, so it cannot hide a
- *  case-variant duplicate), `normalized` only when `distinct` is omitted
- *  entirely. The normalized map is scanned case-insensitively over its own
- *  keys and every match is kept, so a case-duplicated map such as
- *  `{ Authorization: a, authorization: b }` yields BOTH values and the
- *  verifier's more-than-one rule rejects the request instead of one
- *  credential silently winning. Both sources get the same treatment: keys are
- *  scanned case-insensitively and merged (Node lower-cases headersDistinct
- *  itself, but a hand-built map may not), and a matching value or element of
- *  the wrong type throws, so a malformed map becomes a rejected request
- *  through the caller's error mapping, never a silently selected credential. */
+/** §8.4 raw-occurrence boundary: one occurrence as a one-element array, many
+ *  as a longer array, absence as undefined, never a collapsed scalar. The
+ *  complete fail-closed input class (case-insensitive own-key scan, required
+ *  container and element types, single-read snapshots, Proxy rejection,
+ *  length-blind enumeration) is enumerated in §15 and pinned in
+ *  test/adapters-http.test.ts; both sources get identical treatment. */
 export function authorizationOccurrences(
   distinct: Record<string, string[] | undefined> | undefined,
   normalized?: NormRequest["headers"],
@@ -117,11 +107,9 @@ export function authorizationOccurrences(
  *  accessor-backed array cannot show one value at validation, another at publication. */
 function validatedOccurrences(values: readonly unknown[], source: string): string[] {
   // A Proxy is rejected outright: its ownKeys, length, and element traps are
-  // all attacker-controlled, so NO enumeration of it is evidence — one that
-  // hides an index would publish a singleton for a duplicate occurrence.
-  // Everything else that passes Array.isArray is a real array whose own keys
-  // cannot lie; Object.values then reads each own element exactly once and
-  // never consults a length the input could redefine.
+  // all attacker-controlled, so no enumeration of it is evidence. Everything
+  // else passing Array.isArray is a real array whose own keys cannot lie;
+  // Object.values reads each element once, never consulting a lying length.
   if (isProxy(values)) {
     throw new TypeError(`${source} Authorization occurrence is not a plain array`);
   }
