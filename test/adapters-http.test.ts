@@ -217,3 +217,14 @@ test("authorizationOccurrences rejects a Proxy that could hide occurrences", () 
     /Authorization source is not a plain object/,
     "a Proxy source hiding a case-variant key is rejected before enumeration");
 });
+
+test("authorizationOccurrences counts non-enumerable array elements as occurrences", () => {
+  const hostile = ["Bearer attacker", "Bearer valid"] as string[];
+  Object.defineProperty(hostile, "0", { enumerable: false, value: "Bearer attacker" });
+  assert.deepEqual(authorizationOccurrences({ authorization: hostile }), ["Bearer attacker", "Bearer valid"],
+    "a non-enumerable own index must not silently vanish from the occurrence list");
+  const sourceOnly = { Authorization: ["Bearer attacker"] } as Record<string, string[]>;
+  Object.defineProperty(sourceOnly, "authorization", { enumerable: false, value: ["Bearer valid"] });
+  assert.deepEqual(authorizationOccurrences(sourceOnly), ["Bearer attacker"],
+    "a non-enumerable source key is not part of the header map, matching Object.entries semantics");
+});
