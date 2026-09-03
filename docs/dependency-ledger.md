@@ -2,7 +2,7 @@
 
 > Every external dependency pinned by this repo, with its version, publish date, and the **15-day supply-chain check**. Re-verify before any install/bump and before every publish. Companion to [`docs/contracts/15-package-and-export-map.md`](contracts/15-package-and-export-map.md) and `docs/threat-model.md` ("Implementation gates").
 >
-> The enforcing check computes the cutoff from the current UTC date. At this recheck (**2026-08-15**), an ordinary pin is acceptable only if published on or before **2026-07-31** (≥15 days old). A published-advisory exception must satisfy the separate two-rule policy below.
+> The enforcing check computes the cutoff from the current UTC date. At this recheck (**2026-09-03**), an ordinary pin is acceptable only if published on or before **2026-08-19** (≥15 days old). A published-advisory exception must satisfy the separate two-rule policy below.
 
 ## The 15-day rule and `minimumReleaseAge`
 
@@ -50,7 +50,7 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 | [`jsonc-parser`](https://github.com/microsoft/node-jsonc-parser) | `3.3.1` | 2024-06-24 | ✅ | Strict parity-fixture JSON parsing with duplicate object-member detection before schema validation. |
 | [`@modelcontextprotocol/sdk`](https://github.com/modelcontextprotocol/modelcontextprotocol) | `1.29.0` | 2026-03-30 | ✅ | The official MCP SDK, used by end-to-end tests and every server scaffolded by `npx mcp-sso init` (§15), pinned there at this same version. Not a runtime dependency of the mcp-sso package itself. |
 | [`@fastify/rate-limit`](https://github.com/fastify/fastify-rate-limit) | `11.2.0` | 2026-07-29 | ✅ | Real fail-closed `/mcp` middleware for the Fastify examples, generated starter, and isolated helper subpath. Also an optional peer. Not loaded by the root/core entry. |
-| [`fastify`](https://fastify.dev/) | `5.8.5` | 2026-04-14 | ✅ | Reference framework adapter, dev/test + optional peer. |
+| [`fastify`](https://fastify.dev/) | `5.12.1` | 2026-08-18 | ✅ | Reference framework adapter, dev/test + optional peer. |
 | [`express`](https://expressjs.com/) | `5.2.1` | 2025-12-01 | ✅ | Framework adapter, dev/test + optional peer. |
 | [`hono`](https://hono.dev/) | `4.12.34` | 2026-08-03 | Advisory exception | Framework adapter, dev/test + optional peer. The minimum version fixing the recorded published advisories. |
 | [`@types/express`](https://www.npmjs.com/package/@types/express) | `5.0.6` | 2025-12-01 | ✅ | Express typings (dev only). |
@@ -61,18 +61,18 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite` (built in). No bundler, no test framework, no postinstall, ever.
 
-## Transitive advisory sweep (2026-08-15)
+## Transitive advisory sweep (opened 2026-08-15, re-dated 2026-09-03)
 
-An OSV/Dependabot scan flagged 8 published advisories. Every one sits in a **dev-tree transitive dependency** (reachable only from `devDependencies` roots: `fastify`, `@modelcontextprotocol/sdk`). `package.json#dependencies` still contains exactly `jose`, so none of these packages ships in the published artifact. Resolution:
+The 2026-08-15 OSV/Dependabot scan flagged 8 published advisories, every one in a **dev-tree transitive dependency** (reachable only from `devDependencies` roots: `fastify`, `@modelcontextprotocol/sdk`); `package.json#dependencies` still contains exactly `jose`, so none of these packages ships in the published artifact. The 2026-09-03 recheck during the fastify 5.12.1 adoption added four further fast-uri advisories (published 2026-08, all affecting below 3.1.6) and re-resolved two rows that the bump moved; the August receipt is preserved as the rows' original dates, not re-dated. Resolution:
 
 | Transitive package (via) | Was | Now | Advisories | Path |
 |---|---|---|---|---|
-| `find-my-way` (`fastify`) | 9.6.0 | 9.7.0 | GHSA-c96f-x56v-gq3h | ✅ ordinary, 9.7.0 published 2026-07-21 |
+| `find-my-way` (`fastify`) | 9.6.0 | 9.7.0 | GHSA-c96f-x56v-gq3h | ✅ ordinary, 9.7.0 published 2026-07-21; pinned by override because fastify 5.12.1 otherwise floats to 9.9.0 (2026-08-21), under the floor. The pin is the minimum advisory fix, as the remote policy check requires |
 | `ip-address` (SDK → `express-rate-limit`) | 10.2.0 | 10.3.1 | GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh, GHSA-22jq-vg5j-6vgg | ✅ ordinary, 10.3.1 published 2026-07-25 |
 | `@hono/node-server` (SDK) | 1.19.14 | 1.19.17 | GHSA-frvp-7c67-39w9 | ✅ ordinary, 1.19.17 published 2026-07-27 (≥ the 1.19.15 minimum fix, newest within the SDK's `^1.19.9` and past the floor) |
-| `fast-uri` (`ajv`/`fast-json-stringify` under `fastify` + SDK) | 3.1.2 | 3.1.5 | GHSA-4c8g-83qw-93j6, GHSA-v2hh-gcrm-f6hx, GHSA-7p8r-x3mc-p8w7 | ✅ ordinary, 3.1.5 published 2026-07-31 |
+| `fast-uri` (`ajv`/`fast-json-stringify` under `fastify` + SDK) | 3.1.5 | 4.1.3 | GHSA-f65p-4m7j-42xc, GHSA-jqff-g426-hqxp, GHSA-fph4-wmhf-6fwf, GHSA-5jgf-p345-68v8 | ⚠️ advisory-driven under rule 2: 4.1.3 is the minimum fix on the 4.x line, published 2026-08-23. The four ranges span BOTH the 3.x and 4.x lines (first 4.x fix 4.1.3), so 4.1.2 was also exposed; the earlier unaffected claim on this row was wrong and was caught by the range verifier this record now runs |
 
-`fast-uri@3.1.5` is the **minimum version fixing all three** of its advisories (`3.1.3` fixes one, `3.1.4` two, so a partial bump would leave `pnpm audit` red while reading as "fixed"). It was published 2026-07-31T09:16:56.212Z and crossed the 15-day floor at **2026-08-15T09:16:56.212Z**. The exact workspace override keeps every dev-tree path on that minimum complete fix. It does not add a published dependency: the package still has `jose` as its sole runtime dependency.
+`fast-uri@3.1.5` was the minimum version fixing its 2026-07 advisory round (`3.1.3` fixes one, `3.1.4` two). Four further advisories published in 2026-08 affect both release lines: their ranges span 3.x below 3.1.6 AND 4.x below 4.1.3, so no 4.x version below 4.1.3 is safe, including the 4.1.2 this ledger briefly recorded after fastify 5.12.1 (through `@fastify/ajv-compiler ^4.0.5`) forced the override off the 3.x line. The Dependabot rows consulted first showed only the 3.x ranges; the range verifier built to machine-check the claim caught it. The pin is now 4.1.3, the minimum fix on the 4.x line, published 2026-08-23 and adopted under rule 2 with the exception record above because it is under the 15-day floor.
 
 ## Optional peer dependencies (not shipped to consumers)
 
@@ -81,7 +81,7 @@ An OSV/Dependabot scan flagged 8 published advisories. Every one sits in a **dev
 | Package | Peer range | Notes |
 |---|---|---|
 | `@fastify/rate-limit` | `>=11.2.0 <12` | `/fastify/protected-resource-rate-limit`. Mandatory finite `/mcp` admission in the shipped Fastify composition roots. |
-| `fastify` | `>=5` | `/fastify` adapter (reference). |
+| `fastify` | `>=5.12.1` | `/fastify` adapter (reference). Lower bound is the tested advisory-fixed release: 5.12.1 carries the fixes for GHSA-w2qp-rph6-63g4 and GHSA-3m5p-2c4r-xxw2, both affecting older 5.x. A consumer on an affected 5.x must not satisfy the peer range while remaining exposed. |
 | `express` | `>=5` | `/express` adapter. |
 | `hono` | `>=4.12.34 <5` | `/hono` adapter. Lower bound is the tested advisory-fixed `bodyLimit` implementation, upper bound excludes an unverified major. |
 | `mysql2` | `>=3` | `/store/mysql` `StorePort` adapter, shipped in v0.1.2. Pooled. See contract §12.3 for asynchronous transaction cleanup. |
@@ -128,12 +128,31 @@ The following block is the machine-readable source used by `check:deps`. The hum
       "adoptedAt": "2026-08-10",
       "justification": "Inspected Hono v4.12.34 release; it is the minimum published fix for these advisories."
     }
+    ,
+    {
+      "kind": "transitive",
+      "package": "fast-uri",
+      "advisoryIds": [
+        "GHSA-f65p-4m7j-42xc",
+        "GHSA-jqff-g426-hqxp",
+        "GHSA-fph4-wmhf-6fwf",
+        "GHSA-5jgf-p345-68v8"
+      ],
+      "adoptedVersion": "4.1.3",
+      "adoptedAt": "2026-09-03",
+      "justification": "Inspected fast-uri 4.1.3; it is the minimum published fix on the 4.x line for all four 2026-08 advisories, whose ranges span both the 3.x and 4.x lines. Staying on any earlier 4.x is a known exposure, so rule 2 applies and the 15-day floor is waived for this package only."
+    }
   ],
   "transitivePins": {
     "fast-uri": {
-      "version": "3.1.5",
-      "published": "2026-07-31T09:16:56.212Z",
-      "advisoryIds": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx", "GHSA-7p8r-x3mc-p8w7"]
+      "version": "4.1.3",
+      "published": "2026-08-23T01:34:36.066Z",
+      "advisoryIds": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx", "GHSA-7p8r-x3mc-p8w7", "GHSA-f65p-4m7j-42xc", "GHSA-jqff-g426-hqxp", "GHSA-fph4-wmhf-6fwf", "GHSA-5jgf-p345-68v8"]
+    },
+    "find-my-way": {
+      "version": "9.7.0",
+      "published": "2026-07-21T16:45:28.799Z",
+      "advisoryIds": ["GHSA-c96f-x56v-gq3h"]
     }
   },
   "packages": {
@@ -144,7 +163,7 @@ The following block is the machine-readable source used by `check:deps`. The hum
     "ajv": { "version": "8.20.0", "published": "2026-04-24T15:22:16.529Z" },
     "ajv-formats": { "version": "3.0.1", "published": "2024-03-30T11:30:26.728Z" },
     "express": { "version": "5.2.1", "published": "2025-12-01T20:49:43.268Z" },
-    "fastify": { "version": "5.8.5", "published": "2026-04-14T12:07:12.232Z" },
+    "fastify": { "version": "5.12.1", "published": "2026-08-18T19:51:15.791Z" },
     "hono": { "version": "4.12.34", "published": "2026-08-03T02:36:40.543Z" },
     "ioredis": { "version": "5.11.1", "published": "2026-06-04T10:14:59.752Z" },
     "jsonc-parser": { "version": "3.3.1", "published": "2024-06-24T21:12:45.445Z" },

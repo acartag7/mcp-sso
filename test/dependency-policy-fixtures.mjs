@@ -57,6 +57,18 @@ export async function replace(path, before, after) {
   await writeFile(path, source.replace(before, after));
 }
 
+/** Edit the workspace exclusion list without assuming its current members. */
+export async function setExcludedPackages(root, packages) {
+  const workspacePath = join(root, "pnpm-workspace.yaml");
+  const source = await readFile(workspacePath, "utf8");
+  const replaced = source.replace(
+    /^minimumReleaseAgeExclude: \[.*\]$/mu,
+    `minimumReleaseAgeExclude: ${JSON.stringify(packages)}`,
+  );
+  assert.notEqual(replaced, source, "workspace exclusion list found");
+  await writeFile(workspacePath, replaced);
+}
+
 export async function makeHonoExceptionYoung(root, { includeWorkspaceExclusion = true } = {}) {
   const policy = await loadDependencyPolicy(root);
   const hono = policy.packages.hono;
@@ -67,11 +79,7 @@ export async function makeHonoExceptionYoung(root, { includeWorkspaceExclusion =
     `"hono": { "version": "${hono.version}", "published": "${youngPublished}" }`,
   );
   if (!includeWorkspaceExclusion) {
-    await replace(
-      join(root, "pnpm-workspace.yaml"),
-      'minimumReleaseAgeExclude: ["hono"]',
-      "minimumReleaseAgeExclude: []",
-    );
+    await setExcludedPackages(root, []);
   }
   return { policy, youngPublished };
 }
@@ -104,12 +112,28 @@ export async function makeTransitivePinYoung(root) {
   return { pin, youngPublished };
 }
 
+/** Remove any real transitive advisory exception the ledger records for
+ *  `packageName`, resetting the workspace exclusion list to hono only. A no-op
+ *  when the real ledger records nothing for the package. */
+export async function stripTransitiveException(root, packageName = "fast-uri") {
+  const ledgerPath = join(root, "docs/dependency-ledger.md");
+  const ledger = await readFile(ledgerPath, "utf8");
+  const stripped = ledger.replace(new RegExp(
+    `(?:\\n    ,|,)?\\n    \\{\\n      "kind": "transitive",\\n      "package": "${packageName}",[\\s\\S]*?\\n    \\}`,
+  ), "");
+  if (stripped !== ledger) {
+    await writeFile(ledgerPath, stripped);
+    await setExcludedPackages(root, ["hono"]);
+  }
+}
+
 export async function makeTransitiveException(root, {
   version = FAST_URI_PIN,
   lockfileVersion = null,
   secondVersion = null,
   packageName = "fast-uri",
 } = {}) {
+  await stripTransitiveException(root, packageName);
   await setLockfileFastUri(root, { version: lockfileVersion ?? version, secondVersion });
   const record = {
     kind: "transitive",
@@ -128,10 +152,6 @@ export async function makeTransitiveException(root, {
     '"advisoryExceptions": [',
     `"advisoryExceptions": [\n    ${JSON.stringify(record, null, 2).replaceAll("\n", "\n    ")},`,
   );
-  await replace(
-    join(root, "pnpm-workspace.yaml"),
-    'minimumReleaseAgeExclude: ["hono"]',
-    `minimumReleaseAgeExclude: ["hono", "${packageName}"]`,
-  );
+  await setExcludedPackages(root, ["hono", packageName]);
   return record;
 }

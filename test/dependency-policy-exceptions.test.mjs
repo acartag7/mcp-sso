@@ -9,6 +9,7 @@ import {
 import {
   makeHonoExceptionYoung,
   makeTransitiveException,
+  setExcludedPackages,
   FAST_URI_PIN,
   fixture,
   NOW,
@@ -130,11 +131,7 @@ test("a transitive advisory exception binds to a single lockfile resolution", as
 test("workspace and ledger advisory-exception layers cannot diverge", async (t) => {
   await t.test("unrecorded workspace exclusion", async () => {
     const root = await fixture();
-    await replace(
-      join(root, "pnpm-workspace.yaml"),
-      'minimumReleaseAgeExclude: ["hono"]',
-      'minimumReleaseAgeExclude: ["hono", "express"]',
-    );
+    await setExcludedPackages(root, ["hono", "express"]);
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
       /express: workspace age exclusion has no advisory exception record/,
@@ -180,11 +177,7 @@ test("workspace and ledger advisory-exception layers cannot diverge", async (t) 
       '"advisoryExceptions": [',
       `"advisoryExceptions": [\n${JSON.stringify(record, null, 2).replaceAll("\n", "\n    ")},`,
     );
-    await replace(
-      join(root, "pnpm-workspace.yaml"),
-      'minimumReleaseAgeExclude: ["hono"]',
-      'minimumReleaseAgeExclude: ["pnpm", "hono"]',
-    );
+    await setExcludedPackages(root, ["pnpm", "hono"]);
     await assert.rejects(
       verifyLocalDependencyPolicy(root, NOW),
       /pnpm: package-manager pin is not eligible for a package advisory exception/,

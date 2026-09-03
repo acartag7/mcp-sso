@@ -167,6 +167,10 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
             "GHSA-4c8g-83qw-93j6": ["2.4.1", "3.1.3", "4.0.1"],
             "GHSA-v2hh-gcrm-f6hx": ["2.4.3", "3.1.4", "4.1.1"],
             "GHSA-7p8r-x3mc-p8w7": ["2.4.4", "3.1.5", "4.1.2"],
+            "GHSA-f65p-4m7j-42xc": ["3.1.6", "4.1.3"],
+            "GHSA-jqff-g426-hqxp": ["3.1.6", "4.1.3"],
+            "GHSA-fph4-wmhf-6fwf": ["3.1.6", "4.1.3"],
+            "GHSA-5jgf-p345-68v8": ["3.1.6", "4.1.3"],
           }[advisoryId]
         : [adoptedVersion];
       assert.ok(firstPatchedVersions, `known advisory version lines: ${advisoryId}`);
@@ -209,7 +213,7 @@ test("remote evidence binds action tags and npm versions to recorded dates", asy
   staleTransitive.transitivePins["fast-uri"].version = "3.1.4";
   await assert.rejects(
     verifyRemoteDependencyPolicy(staleTransitive, { fetchImpl, token: "not-a-secret" }),
-    /fast-uri: advisory .* first patched version 3\.1\.5 is newer than adopted 3\.1\.4/,
+    /fast-uri: advisory .* first patched version 3\.1\.6 is newer than adopted 3\.1\.4/,
   );
 
   const badFetch = async (input, init) => {

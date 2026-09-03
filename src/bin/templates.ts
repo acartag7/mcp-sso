@@ -2,7 +2,7 @@
 import { generatedReadme } from "./template-readme.ts";
 /** Fastify, its limiter, and the MCP SDK use the exact tested devDependency pins.
  *  Keep these ledger-recorded constants in sync when the repo pins move. */
-const FASTIFY_VERSION = "5.8.5"; const FASTIFY_RATE_LIMIT_VERSION = "11.2.0";
+const FASTIFY_VERSION = "5.12.1"; const FASTIFY_RATE_LIMIT_VERSION = "11.2.0";
 const MCP_SDK_VERSION = "1.29.0";
 
 export interface TemplateVars {
