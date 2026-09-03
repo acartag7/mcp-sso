@@ -146,7 +146,8 @@ export { Bridge, type BridgeDeps } from "./adapters/bridge.ts";
 // / NormResponse are the normalized shapes the framework-free surface speaks — the
 // types handlePairingAuthorize + createUpstreamRedirectFlow take/return — so a
 // consumer mounting those surfaces can type-check them (contracts §15 DX).
-export { authorizationOccurrences, isMcpPath, type NormRequest, type NormResponse } from "./adapters/http.ts";
+export { authorizationOccurrences } from "./adapters/authorization-occurrences.ts";
+export { isMcpPath, type NormRequest, type NormResponse } from "./adapters/http.ts";
 // authorizationOccurrences — §8.4's raw Authorization occurrence-array boundary
 // for a consumer's own /mcp composition root; see the §15 DX paragraph.
 export {

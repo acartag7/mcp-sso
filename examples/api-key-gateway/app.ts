@@ -34,9 +34,10 @@ import { createConsolePairingIdentity, type ConsolePairingOptions } from "../../
 import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import {
-  authorizationOccurrences, headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader as readSecurityHeader,
+  headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader as readSecurityHeader,
   semanticOAuthBody, type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
+import { authorizationOccurrences } from "../../src/adapters/authorization-occurrences.ts";
 import { queryOccurrencesFromUrl } from "../../src/adapters/authorize-params.ts";
 import {
   addOAuthFormContentTypeParser, FASTIFY_PAIRING_AUTHORIZE_RATE_LIMIT, registerOAuthRoutes,

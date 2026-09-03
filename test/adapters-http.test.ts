@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  authorizationOccurrences, headerString, headersFromDistinct, INVALID_RESOURCE, isMcpPath, noStoreHeaders, readHeader, resourceParam,
+  headerString, headersFromDistinct, INVALID_RESOURCE, isMcpPath, noStoreHeaders, readHeader, resourceParam,
 } from "../src/adapters/http.ts";
+import { authorizationOccurrences } from "../src/adapters/authorization-occurrences.ts";
 
 test("resourceParam omits valueless occurrences before enforcing the singleton resource policy", () => {
   assert.equal(resourceParam(undefined), undefined);
@@ -159,17 +160,21 @@ test("authorizationOccurrences rejects a malformed matching container, not just 
     "a non-array matching value must throw even when its length is 0, never skip to the valid case variant");
 });
 
-test("authorizationOccurrences reads each element once and publishes the snapshot", () => {
-  // A real array with an index accessor is the non-Proxy single-read attacker.
-  let reads = 0;
+test("authorizationOccurrences rejects accessor-backed elements outright", () => {
+  // The static-data boundary: an index accessor's getter runs attacker code
+  // during enumeration (it could delete a sibling occurrence before the
+  // snapshot reaches it), so accessors throw instead of being single-read.
   const hostile = ["placeholder"] as string[];
+  let reads = 0;
   Object.defineProperty(hostile, "0", {
     enumerable: true, configurable: true,
-    get() { reads += 1; return reads === 1 ? "Bearer valid" : "boxed poison"; },
+    get() { reads += 1; delete hostile[1]; return "Bearer attacker"; },
   });
-  assert.deepEqual(authorizationOccurrences({ authorization: hostile }), ["Bearer valid"],
-    "the validated snapshot is what is published; the second, poisoned read never happens");
-  assert.equal(reads, 1, "each element is read exactly once");
+  hostile[1] = "Bearer victim";
+  assert.throws(() => authorizationOccurrences({ authorization: hostile }),
+    /has an accessor property/,
+    "a getter that erases a sibling occurrence is rejected before any read");
+  assert.equal(reads, 0, "the accessor is never invoked");
 });
 
 test("authorizationOccurrences ignores a lying length without trusting a Proxy", () => {
@@ -203,7 +208,12 @@ test("authorizationOccurrences rejects a Proxy that could hide occurrences", () 
     ownKeys(target) { return Reflect.ownKeys(target).filter((key) => key !== "0"); },
   }) as unknown as string[];
   assert.throws(() => authorizationOccurrences({ authorization: hiding }),
-    /distinct Authorization occurrence is not a plain array/,
+    /is not a plain object/,
     "no enumeration of a Proxy is evidence; a hidden index must not publish a singleton");
-  const { isProxy: _ } = { isProxy: true } as never; void _;
+  const hidingSource = new Proxy({ Authorization: ["Bearer attacker"], authorization: ["Bearer valid"] }, {
+    ownKeys(target) { return ["Authorization"]; },
+  }) as unknown as Record<string, string[]>;
+  assert.throws(() => authorizationOccurrences(hidingSource),
+    /Authorization source is not a plain object/,
+    "a Proxy source hiding a case-variant key is rejected before enumeration");
 });

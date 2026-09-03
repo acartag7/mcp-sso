@@ -1,7 +1,8 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { originOf, type BridgeConfig } from "../../src/config.ts";
-import { authorizationOccurrences, headersFromDistinct, readHeader } from "../../src/adapters/http.ts";
+import { headersFromDistinct, readHeader } from "../../src/adapters/http.ts";
+import { authorizationOccurrences } from "../../src/adapters/authorization-occurrences.ts";
 import { OAuthError } from "../../src/errors.ts";
 import type { RequestAuthorizer } from "../../src/verifier.ts";
 import { FixtureRunnerError } from "./error.ts";
