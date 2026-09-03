@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  headerString, headersFromDistinct, INVALID_RESOURCE, isMcpPath, noStoreHeaders, readHeader, resourceParam,
+  authorizationOccurrences, headerString, headersFromDistinct, INVALID_RESOURCE, isMcpPath, noStoreHeaders, readHeader, resourceParam,
 } from "../src/adapters/http.ts";
 
 test("resourceParam omits valueless occurrences before enforcing the singleton resource policy", () => {
@@ -94,4 +94,33 @@ test("isMcpPath: non-/mcp targets and garbage return false without throwing", ()
   assert.equal(isMcpPath("/"), false);
   assert.equal(isMcpPath("not a url at all"), false);
   assert.equal(isMcpPath(""), false);
+});
+
+// §8.4 raw-occurrence boundary: one occurrence as a one-element array, absence
+// as undefined, case-duplicated normalized keys preserving BOTH values so the
+// verifier's more-than-one rule fails closed instead of one credential
+// silently winning, and array values flattened into the occurrence list.
+test("authorizationOccurrences keeps the raw occurrence shape at every source", () => {
+  assert.deepEqual(authorizationOccurrences({ authorization: ["Bearer one"] }), ["Bearer one"]);
+  assert.deepEqual(authorizationOccurrences({ authorization: ["Bearer one", "Bearer two"] }), ["Bearer one", "Bearer two"]);
+  assert.equal(authorizationOccurrences({}), undefined);
+  assert.equal(authorizationOccurrences(undefined, {}), undefined);
+  assert.deepEqual(authorizationOccurrences(undefined, { authorization: "Bearer one" }), ["Bearer one"]);
+  assert.deepEqual(authorizationOccurrences(undefined, { authorization: ["Bearer one", "Bearer two"] }), ["Bearer one", "Bearer two"]);
+});
+
+test("authorizationOccurrences fails closed on case-duplicated normalized keys", () => {
+  assert.deepEqual(
+    authorizationOccurrences(undefined, { Authorization: "Bearer attacker", authorization: "Bearer valid" }),
+    ["Bearer attacker", "Bearer valid"],
+    "both occurrences survive, so the verifier's more-than-one rule rejects the request",
+  );
+  const typed = authorizationOccurrences as (d: undefined, n: Record<string, unknown>) => string[] | undefined;
+  assert.deepEqual(
+    typed(undefined, { AUTHORIZATION: "Bearer a", Authorization: "Bearer b", authorization: ["Bearer c"] }),
+    ["Bearer a", "Bearer b", "Bearer c"],
+    "every case variant and array entry joins the occurrence list",
+  );
+  assert.deepEqual(authorizationOccurrences({ authorization: ["Bearer distinct"] }, { Authorization: "Bearer ignored" }),
+    ["Bearer distinct"], "a present distinct source is authoritative");
 });

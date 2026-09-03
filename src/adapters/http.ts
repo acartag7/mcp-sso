@@ -79,9 +79,14 @@ export function headersFromDistinct(
  *  the raw Authorization occurrence array into RequestAuthorizer, never a
  *  framework's normalized first value. One occurrence arrives as a one-element
  *  array, distinct occurrences as a longer array, absence as undefined. Source
- *  precedence matches headersFromDistinct: `distinct` when present (its
- *  authorization key missing means absent), `normalized` only when `distinct`
- *  is omitted entirely. */
+ *  precedence matches headersFromDistinct: `distinct` when present (Node's
+ *  headersDistinct is canonically lower-cased, so it cannot hide a
+ *  case-variant duplicate), `normalized` only when `distinct` is omitted
+ *  entirely. The normalized map is scanned case-insensitively over its own
+ *  keys and every match is kept, so a case-duplicated map such as
+ *  `{ Authorization: a, authorization: b }` yields BOTH values and the
+ *  verifier's more-than-one rule rejects the request instead of one
+ *  credential silently winning. */
 export function authorizationOccurrences(
   distinct: Record<string, string[] | undefined> | undefined,
   normalized?: NormRequest["headers"],
@@ -90,9 +95,14 @@ export function authorizationOccurrences(
     const values = distinct.authorization;
     return values !== undefined && values.length > 0 ? [...values] : undefined;
   }
-  const value = normalized?.authorization;
-  if (value === undefined) return undefined;
-  return Array.isArray(value) ? [...value] : [value];
+  if (normalized === undefined) return undefined;
+  const occurrences: string[] = [];
+  for (const [key, value] of Object.entries(normalized)) {
+    if (key.toLowerCase() !== "authorization") continue;
+    if (typeof value === "string") occurrences.push(value);
+    else if (Array.isArray(value)) occurrences.push(...value);
+  }
+  return occurrences.length > 0 ? occurrences : undefined;
 }
 
 export function readHeader(headers: NormRequest["headers"], name: string): HeaderRead {
