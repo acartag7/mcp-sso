@@ -145,6 +145,9 @@ test("authorizationOccurrences gives the distinct source the same case and type 
   );
   assert.throws(() => distinctTyped({ authorization: [7, "Bearer valid"] }),
     /distinct Authorization occurrence is not a string/);
+  assert.throws(() => distinctTyped({ authorization: [new String("Bearer valid")] }),
+    /distinct Authorization occurrence is not a string/,
+    "a boxed String is an object, not a primitive string, and is rejected rather than trimmed into a token");
   assert.equal(authorizationOccurrences({ authorization: [] }), undefined,
     "an empty occurrence list is absence, which still fails closed at the verifier");
 });
