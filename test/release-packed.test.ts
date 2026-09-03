@@ -44,6 +44,24 @@ async function installFrozenOffline(cwd: string, label: string): Promise<void> {
   assert.equal(install.code, 0, `${label} install failed:\n${install.output}`);
 }
 
+/** The repo's pnpm-workspace overrides, so the offline consumers resolve the
+ *  same versions the copied lockfile and the offline store carry. Without the
+ *  fast-uri pin the generated tree splits across majors (the SDK declares ^3,
+ *  fastify's ajv-compiler declares ^4) and neither major alone satisfies both,
+ *  so an offline resolve with no override cannot complete. */
+function workspaceOverrides(yaml: string): Record<string, string> {
+  const lines = yaml.split("\n");
+  const start = lines.findIndex((line) => line === "overrides:");
+  if (start === undefined || start === -1) throw new Error("pnpm-workspace.yaml carries an overrides block");
+  const overrides: Record<string, string> = {};
+  for (const line of lines.slice(start + 1)) {
+    const match = /^  ([^:#\s]+): (.+)$/.exec(line);
+    if (match === null || match[1] === undefined || match[2] === undefined) break;
+    overrides[match[1]] = match[2];
+  }
+  return overrides;
+}
+
 function lockEntry(importer: string, name: string): string {
   const marker = name.startsWith("@") ? `      '${name}':\n` : `      ${name}:\n`;
   const start = importer.indexOf(marker); assert.notEqual(start, -1, `copied lock contains ${name}`);
@@ -98,8 +116,11 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
     assert.equal(zodPack.code, 0, `local zod pack failed:\n${zodPack.output}`);
     const zodTarball = basename(zodPack.output.trim().split("\n").at(-1) ?? ""); assert.match(zodTarball, /^zod-4\.4\.3\.tgz$/);
 
-    const packageOverrides = { [`mcp-sso@${repoPkg.version}`]: `file:./${basename(tarball)}`,
-      jose: `file:./${joseTarball}`, zod: `file:./${zodTarball}` };
+    const packageOverrides = {
+      ...workspaceOverrides(await readFile(join(repo, "pnpm-workspace.yaml"), "utf8")),
+      [`mcp-sso@${repoPkg.version}`]: `file:./${basename(tarball)}`,
+      jose: `file:./${joseTarball}`, zod: `file:./${zodTarball}`,
+    };
     const rootPackage = {
       name: "mcp-sso-release-consumer", private: true, type: "module", packageManager: repoPkg.packageManager,
       dependencies: {
