@@ -45,7 +45,7 @@ export function registerGrantRows(label: string, make: MakeStore, _options: Stor
     await store.close();
   });
 
-  // §12.2 invariant 10: stored rows own their scopes array on write and on read.
+  // §12.2 invariant 13: stored rows own their scopes array on write and on read.
   test(`${label}: stored rows own their scopes array against the caller and the returned record`, async () => {
     const store = await make();
     const input = authCode("detached-auth-code", FUTURE);

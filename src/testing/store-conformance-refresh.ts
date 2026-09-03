@@ -9,7 +9,7 @@ import { FUTURE, LATER, NOW, RESOURCE_A, RESOURCE_B, refresh, sha256Hex, type Ma
 
 
 export function registerRefreshRows(label: string, make: MakeStore, _options: StoreConformanceOptions = {}): void {
-  // §12.2 invariant 10: stored rows own their scopes array on write, on read, and across rotation.
+  // §12.2 invariant 13: stored rows own their scopes array on write, on read, and across rotation.
   test(`${label}: stored refresh rows own their scopes array on write, on read, and across rotation`, async () => {
     const store = await make();
     const input = refresh("detached-refresh", "detached-family", null, FUTURE);
