@@ -67,7 +67,7 @@ An OSV/Dependabot scan flagged 8 published advisories. Every one sits in a **dev
 
 | Transitive package (via) | Was | Now | Advisories | Path |
 |---|---|---|---|---|
-| `find-my-way` (`fastify`) | 9.6.0 | 9.8.0 | GHSA-c96f-x56v-gq3h | ✅ ordinary, 9.8.0 published 2026-08-14; pinned by override because fastify 5.12.1 otherwise resolves 9.9.0 (2026-08-21), under the floor |
+| `find-my-way` (`fastify`) | 9.6.0 | 9.7.0 | GHSA-c96f-x56v-gq3h | ✅ ordinary, 9.7.0 published 2026-07-21; pinned by override because fastify 5.12.1 otherwise floats to 9.9.0 (2026-08-21), under the floor. The pin is the minimum advisory fix, as the remote policy check requires |
 | `ip-address` (SDK → `express-rate-limit`) | 10.2.0 | 10.3.1 | GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh, GHSA-22jq-vg5j-6vgg | ✅ ordinary, 10.3.1 published 2026-07-25 |
 | `@hono/node-server` (SDK) | 1.19.14 | 1.19.17 | GHSA-frvp-7c67-39w9 | ✅ ordinary, 1.19.17 published 2026-07-27 (≥ the 1.19.15 minimum fix, newest within the SDK's `^1.19.9` and past the floor) |
 | `fast-uri` (`ajv`/`fast-json-stringify` under `fastify` + SDK) | 3.1.5 | 4.1.2 | cleared by the move: GHSA-f65p-4m7j-42xc, GHSA-jqff-g426-hqxp, GHSA-fph4-wmhf-6fwf, GHSA-5jgf-p345-68v8 (all affect <3.1.6 only); machine-verified ids stay the 2026-07 three, whose 4.x-line fixes 4.0.1/4.1.1/4.1.2 bound 4.1.2 | ✅ ordinary, 4.1.2 published 2026-07-31 |
@@ -136,8 +136,8 @@ The following block is the machine-readable source used by `check:deps`. The hum
       "advisoryIds": ["GHSA-4c8g-83qw-93j6", "GHSA-v2hh-gcrm-f6hx", "GHSA-7p8r-x3mc-p8w7"]
     },
     "find-my-way": {
-      "version": "9.8.0",
-      "published": "2026-08-14T21:56:06.716Z",
+      "version": "9.7.0",
+      "published": "2026-07-21T16:45:28.799Z",
       "advisoryIds": ["GHSA-c96f-x56v-gq3h"]
     }
   },

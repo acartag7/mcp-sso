@@ -7,4 +7,4 @@ minimumReleaseAge: 21600
 minimumReleaseAgeExclude: ["hono"]
 overrides:
   fast-uri: 4.1.2
-  find-my-way: 9.8.0
+  find-my-way: 9.7.0
