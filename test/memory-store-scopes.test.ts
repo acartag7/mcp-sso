@@ -147,3 +147,53 @@ test("a throwing scopes iterator during refresh save creates no family row", asy
   // resource mismatch instead of accepting it.
   await store.saveRefreshToken(refreshInput({ resource: "https://other.example.com/mcp", scopes: ["mcp:read"] }));
 });
+
+// Reentrancy (hosted review round two): a reentrant iterable does not throw;
+// its iterator calls back into the store mid-iteration. The materialization
+// must therefore run BEFORE the guards, so no caller-controlled code executes
+// between a state check and its write. These regressions pin both orderings.
+
+function reentrantScopes(afterYields: number, callback: () => void): string[] {
+  let yielded = 0;
+  let fired = false;
+  return {
+    [Symbol.iterator]: (): Iterator<string> => ({
+      next: () => {
+        if (!fired && yielded === afterYields) { fired = true; callback(); }
+        return yielded++ < 2 ? { value: "mcp:read", done: false } : { done: true } as IteratorResult<string>;
+      },
+    }),
+  } as unknown as string[];
+}
+
+test("a reentrant consent commit stores exactly one code for one JTI", async () => {
+  const store = new MemoryStore();
+  const instanceId = await store.getStoreInstanceId();
+  const nested: string[] = [];
+  const outer = await store.commitConsentApproval(instanceId, JTI, EXPIRES_AT, authCodeInput({
+    scopes: reentrantScopes(1, () => {
+      void (async () => {
+        nested.push(await store.commitConsentApproval(instanceId, JTI, EXPIRES_AT, authCodeInput({ codeHash: "d".repeat(64), scopes: ["mcp:read"] })));
+      })();
+    }),
+  }));
+  const maps = internalMaps(store);
+  assert.deepEqual([outer, ...nested].sort(), ["replayed", "stored"],
+    "exactly one commit stores; the loser sees replayed, never both stored");
+  assert.equal(maps.authCodes.size, 1, "one consent JTI stores one authorization code");
+});
+
+test("a reentrant refresh save cannot split a family's resource binding", async () => {
+  const store = new MemoryStore();
+  const OTHER_RESOURCE = "https://other.example.com/mcp";
+  await assert.rejects(store.saveRefreshToken(refreshInput({
+    scopes: reentrantScopes(1, () => { void store.saveRefreshToken(refreshInput({ tokenHash: "e".repeat(64), resource: OTHER_RESOURCE })); }),
+  })), /family grantGeneration or resource mismatch/);
+  const maps = internalMaps(store);
+  assert.equal(maps.refreshTokens.size, 1, "only the nested token is stored");
+  const rows = (store as unknown as { refreshTokens: Map<string, { resource: string }> }).refreshTokens;
+  const families = (store as unknown as { families: Map<string, { resource: string }> }).families;
+  const stored = [...rows.values()][0];
+  assert.equal(families.get(FAMILY)?.resource, stored.resource,
+    "the family binding matches the one stored row, never a stale write");
+});

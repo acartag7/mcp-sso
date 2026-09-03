@@ -50,11 +50,15 @@ export class MemoryStore implements StorePort {
     assertUtcIsoTimestamp(expiresAtIso, "expiresAtIso");
     validateAuthCode(authCode);
     if (expectedStoreInstanceId !== this.storeInstanceId) return "binding_mismatch";
-    if (this.consentJtis.has(jti)) return "replayed";
-    if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return "replayed";
+    // Materialize the complete record BEFORE the guards: the scopes spread runs
+    // caller code, so any later placement lets a reentrant iterable fire a
+    // nested commit between the replay check and the write, storing two codes
+    // for one consent JTI.
     const stored = {
       ...authCode, scopes: [...authCode.scopes], grantGeneration: grantGenerationForWrite(authCode.grantGeneration),
     };
+    if (this.consentJtis.has(jti)) return "replayed";
+    if (this.sweptThrough !== null && expiresAtIso < this.sweptThrough) return "replayed";
     this.consentJtis.set(jti, expiresAtIso);
     this.authCodes.set(stored.codeHash, stored);
     return "stored";
@@ -96,11 +100,15 @@ export class MemoryStore implements StorePort {
     // the SQL stores' PRIMARY KEY rejection).
     if (this.refreshTokens.has(input.tokenHash)) throw new StoreInputError("tokenHash already exists");
     const grantGeneration = grantGenerationForWrite(input.grantGeneration);
+    // Materialize the row BEFORE reading token/family state: the scopes spread
+    // runs caller code, so any later placement lets a reentrant iterable fire a
+    // nested save between the family check and the writes, binding the outer
+    // row to a stale family result.
+    const row = { ...input, scopes: [...input.scopes], grantGeneration, consumedAt: null };
     const family = this.families.get(input.familyId);
     if (family && (family.grantGeneration !== grantGeneration || family.resource !== input.resource)) {
       throw new StoreInputError("family grantGeneration or resource mismatch");
     }
-    const row = { ...input, scopes: [...input.scopes], grantGeneration, consumedAt: null };
     if (!family) this.families.set(input.familyId, { revokedAt: null, grantGeneration, resource: input.resource });
     this.refreshTokens.set(row.tokenHash, row);
   }
