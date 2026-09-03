@@ -8,7 +8,7 @@
     "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
   },
   "status": "draft",
-  "notes": "Zero-occurrence input class of the quoted sentence, in its only wire-observable form: a request carrying no Authorization occurrence at all is indistinguishable on the wire from a zero-element array, and must fail closed with the same invalid_token 401 challenge as the more-than-one class. An implementation that admits an unauthenticated request, or that answers absence with a different error or status than a duplicate occurrence, fails here.",
+  "notes": "Zero-occurrence input class of the quoted sentence, in its only wire-observable form: a request carrying no Authorization occurrence is indistinguishable on the wire from a zero-element array, and must fail closed with the same invalid_token 401 challenge as the more-than-one class. The zero-element array itself, distinct from absence, is not expressible on the wire; that input class is exercised at the verifier boundary in test/jwt-clock-hardening.test.ts, which drives RequestAuthorizer.authorize with authorization: [] and pins the exactly-once rejection.",
   "given": {
     "config": {
       "issuer": "https://api.example.com",
