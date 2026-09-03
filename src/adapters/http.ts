@@ -75,6 +75,26 @@ export function headersFromDistinct(
 }
 
 /** Snapshot one case-insensitive normalized header without selecting a duplicate. */
+/** §8.4 raw-occurrence boundary: every shipped `/mcp` composition root passes
+ *  the raw Authorization occurrence array into RequestAuthorizer, never a
+ *  framework's normalized first value. One occurrence arrives as a one-element
+ *  array, distinct occurrences as a longer array, absence as undefined. Source
+ *  precedence matches headersFromDistinct: `distinct` when present (its
+ *  authorization key missing means absent), `normalized` only when `distinct`
+ *  is omitted entirely. */
+export function authorizationOccurrences(
+  distinct: Record<string, string[] | undefined> | undefined,
+  normalized?: NormRequest["headers"],
+): string[] | undefined {
+  if (distinct !== undefined) {
+    const values = distinct.authorization;
+    return values !== undefined && values.length > 0 ? [...values] : undefined;
+  }
+  const value = normalized?.authorization;
+  if (value === undefined) return undefined;
+  return Array.isArray(value) ? [...value] : [value];
+}
+
 export function readHeader(headers: NormRequest["headers"], name: string): HeaderRead {
   const lower = name.toLowerCase();
   let value: string | undefined;

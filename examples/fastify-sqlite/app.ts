@@ -62,7 +62,7 @@ import { handlePairingAuthorize } from "../../src/adapters/pairing-flow.ts";
 import { createUpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import { assertCallbackPath } from "../../src/adapters/upstream-flow-internals.ts";
 import {
-  headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader, semanticOAuthBody,
+  authorizationOccurrences, headersFromDistinct, isMcpPath, OAUTH_POST_BODY_MAX_BYTES, readHeader, semanticOAuthBody,
   type NormRequest, type NormResponse,
 } from "../../src/adapters/http.ts";
 import { queryOccurrencesFromUrl } from "../../src/adapters/authorize-params.ts";
@@ -226,10 +226,7 @@ export async function buildApp(opts: ExampleOptions) {
     let auth;
     try {
       auth = await authorizer.authorize({
-        authorization: headersFromDistinct(
-          request.raw.headersDistinct,
-          request.headers as NormRequest["headers"],
-        ).authorization,
+        authorization: authorizationOccurrences(request.raw.headersDistinct, request.headers as NormRequest["headers"]),
       });
     } catch (error) {
       const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);

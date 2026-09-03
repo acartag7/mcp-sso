@@ -1,7 +1,7 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { originOf, type BridgeConfig } from "../../src/config.ts";
-import { headersFromDistinct, readHeader } from "../../src/adapters/http.ts";
+import { authorizationOccurrences, headersFromDistinct, readHeader } from "../../src/adapters/http.ts";
 import { OAuthError } from "../../src/errors.ts";
 import type { RequestAuthorizer } from "../../src/verifier.ts";
 import { FixtureRunnerError } from "./error.ts";
@@ -70,18 +70,11 @@ export async function protectedOutcome(input: ProtectedOutcomeInput): Promise<Ho
 
 /** §8.4: every shipped composition root passes the raw Authorization
  *  occurrence array into RequestAuthorizer, never a framework's normalized
- *  first value. Deliver that boundary here too: a one-occurrence request
- *  reaches the authorizer as a one-element array, which is the exact input
- *  class the verifier's array rule names, instead of the scalar
- *  headersFromDistinct produces for a single occurrence. */
+ *  first value. The host delivers the same boundary through the same exported
+ *  helper the shipped roots use, so the fixture boundary and the product
+ *  boundary cannot drift apart. */
 function authorizationInput(input: ProtectedOutcomeInput): string | string[] | undefined {
-  if (input.distinct !== undefined) {
-    const values = input.distinct.authorization;
-    return values !== undefined && values.length > 0 ? [...values] : undefined;
-  }
-  const normalized = input.normalized?.authorization;
-  if (normalized === undefined) return undefined;
-  return Array.isArray(normalized) ? normalized : [normalized];
+  return authorizationOccurrences(input.distinct, input.normalized);
 }
 
 /** Read the mount's headers through the library's own precedence: `distinct`
