@@ -116,8 +116,19 @@ releaseTest("RM.1 packed generated server uses the installed npm bin for the com
     assert.equal(zodPack.code, 0, `local zod pack failed:\n${zodPack.output}`);
     const zodTarball = basename(zodPack.output.trim().split("\n").at(-1) ?? ""); assert.match(zodTarball, /^zod-4\.4\.3\.tgz$/);
 
+    // Offline determinism requires pinning the two transitives whose natural
+    // resolutions float past the 15-day floor (npm's latest is unrestricted by
+    // age): fast-uri (the SDK declares ^3, fastify's ajv-compiler declares ^4,
+    // and the offline store holds exactly one) and find-my-way. The pins are
+    // floor-passing versions INSIDE every declared range, so the lifecycle
+    // still installs a graph a user could receive — but not necessarily npm's
+    // default-latest graph. That divergence is the known cost of an offline
+    // release gate and is recorded here rather than hidden in a blanket copy.
+    const pins = { ...workspaceOverrides(await readFile(join(repo, "pnpm-workspace.yaml"), "utf8")) };
+    assert.deepEqual(Object.keys(pins).sort(), ["fast-uri", "find-my-way"],
+      "offline pins stay limited to the floor-bound transitives");
     const packageOverrides = {
-      ...workspaceOverrides(await readFile(join(repo, "pnpm-workspace.yaml"), "utf8")),
+      ...pins,
       [`mcp-sso@${repoPkg.version}`]: `file:./${basename(tarball)}`,
       jose: `file:./${joseTarball}`, zod: `file:./${zodTarball}`,
     };
