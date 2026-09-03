@@ -107,7 +107,7 @@ app.post("/mcp", async (request, reply) => {
 });
 ```
 
-`RequestAuthorizer.authorize` fails closed. A missing token, a wrong audience, an expired token, or a missing scope throws an `OAuthError` whose `status` is 401 or 403. There is no local or unauthenticated mode. The tested example reads the header through `headersFromDistinct` so that a duplicated `Authorization` header is rejected instead of silently collapsed; this fragment reads it the plain way. Start from the example when you wire your own route.
+`RequestAuthorizer.authorize` fails closed. A missing token, a wrong audience, an expired token, or a missing scope throws an `OAuthError` whose `status` is 401 or 403. There is no local or unauthenticated mode. Both the tested example and the fragment above read the header through `authorizationOccurrences(request.raw.headersDistinct, ...)`, which passes the raw `Authorization` occurrence array into `RequestAuthorizer` so a duplicated header is rejected instead of silently collapsed. Never pass `request.headers.authorization` directly: the framework-normalized scalar has already discarded every occurrence but one.
 
 ## What ships
 
