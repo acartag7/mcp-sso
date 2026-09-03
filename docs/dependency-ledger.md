@@ -2,7 +2,7 @@
 
 > Every external dependency pinned by this repo, with its version, publish date, and the **15-day supply-chain check**. Re-verify before any install/bump and before every publish. Companion to [`docs/contracts/15-package-and-export-map.md`](contracts/15-package-and-export-map.md) and `docs/threat-model.md` ("Implementation gates").
 >
-> The enforcing check computes the cutoff from the current UTC date. At this recheck (**2026-08-15**), an ordinary pin is acceptable only if published on or before **2026-07-31** (≥15 days old). A published-advisory exception must satisfy the separate two-rule policy below.
+> The enforcing check computes the cutoff from the current UTC date. At this recheck (**2026-09-03**), an ordinary pin is acceptable only if published on or before **2026-08-19** (≥15 days old). A published-advisory exception must satisfy the separate two-rule policy below.
 
 ## The 15-day rule and `minimumReleaseAge`
 
