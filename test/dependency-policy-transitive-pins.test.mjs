@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { join } from "node:path";
 import test from "node:test";
 import { verifyLocalDependencyPolicy } from "../scripts/check-dependency-policy.mjs";
-import { FAST_URI_PIN, fixture, makeTransitiveException, makeTransitivePinYoung, NOW, replace } from "./dependency-policy-fixtures.mjs";
+import { FAST_URI_PIN, fixture, makeTransitiveException, makeTransitivePinYoung, NOW, replace, stripTransitiveException } from "./dependency-policy-fixtures.mjs";
 
 /** Any stable version that is not the recorded pin, for stale-resolution drift. */
 const STALE_VERSION = "0.0.1";
@@ -45,6 +45,7 @@ test("a transitive advisory exception waives the age floor", async () => {
 
 test("a young transitive pin without an advisory exception still fails the age floor", async () => {
   const root = await fixture();
+  await stripTransitiveException(root);
   const { youngPublished } = await makeTransitivePinYoung(root);
   await assert.rejects(
     verifyLocalDependencyPolicy(root, NOW),
