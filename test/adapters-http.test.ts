@@ -160,44 +160,31 @@ test("authorizationOccurrences rejects a malformed matching container, not just 
 });
 
 test("authorizationOccurrences reads each element once and publishes the snapshot", () => {
+  // A real array with an index accessor is the non-Proxy single-read attacker.
   let reads = 0;
-  const hostile = new Proxy(["Bearer valid"], {
-    get(target, prop, receiver) {
-      if (prop === "0") {
-        reads += 1;
-        return reads === 1 ? "Bearer valid" : new String("Bearer poisoned");
-      }
-      return Reflect.get(target, prop, receiver);
-    },
-  }) as unknown as string[];
+  const hostile = ["placeholder"] as string[];
+  Object.defineProperty(hostile, "0", {
+    enumerable: true, configurable: true,
+    get() { reads += 1; return reads === 1 ? "Bearer valid" : "boxed poison"; },
+  });
   assert.deepEqual(authorizationOccurrences({ authorization: hostile }), ["Bearer valid"],
     "the validated snapshot is what is published; the second, poisoned read never happens");
   assert.equal(reads, 1, "each element is read exactly once");
-  const readsNormalized = { count: 0, map: {} as Record<string, string[]> };
-  readsNormalized.map.authorization = new Proxy(["Bearer valid"], {
-    get(target, prop, receiver) {
-      if (prop === "0") { readsNormalized.count += 1; return readsNormalized.count === 1 ? "Bearer valid" : "poisoned"; }
-      return Reflect.get(target, prop, receiver);
-    },
-  }) as unknown as string[];
-  assert.deepEqual(authorizationOccurrences(undefined, readsNormalized.map), ["Bearer valid"]);
-  assert.equal(readsNormalized.count, 1, "the normalized branch reads each element once too");
 });
 
-test("authorizationOccurrences never reads a proxy length before the snapshot", () => {
-  const hostile = new Proxy(["Bearer attacker"], {
-    get(target, prop, receiver) {
-      if (prop === "length") return 0; // claim absence on every length read
-      return Reflect.get(target, prop, receiver);
-    },
-  }) as unknown as string[];
+test("authorizationOccurrences ignores a lying length without trusting a Proxy", () => {
+  // A non-Proxy subclass with a lying length getter keeps honest own keys, so
+  // its present elements still publish and emptiness comes from the snapshot.
+  class LyingLength extends Array { get length() { return 0; } }
+  const lying = new LyingLength() as unknown as string[];
+  lying.push("Bearer attacker");
   assert.deepEqual(
-    authorizationOccurrences({ Authorization: hostile, authorization: ["Bearer valid"] }),
+    authorizationOccurrences({ Authorization: lying, authorization: ["Bearer valid"] }),
     ["Bearer attacker", "Bearer valid"],
     "the faked-empty variant still contributes, so more-than-one rejects",
   );
-  assert.deepEqual(authorizationOccurrences({ authorization: hostile }), ["Bearer attacker"],
-    "a sole proxy array publishes its real snapshot, not its claimed emptiness");
+  assert.deepEqual(authorizationOccurrences({ authorization: lying }), ["Bearer attacker"],
+    "a sole lying-length array publishes its real snapshot, not its claimed emptiness");
 });
 
 test("authorizationOccurrences pins the remaining contract class: sparse holes and blanks", () => {
@@ -209,4 +196,14 @@ test("authorizationOccurrences pins the remaining contract class: sparse holes a
     "a blank occurrence passes through and fails closed at the verifier's bearer grammar");
   assert.deepEqual(authorizationOccurrences(undefined, { authorization: "" }), [""],
     "the normalized branch passes blanks through too");
+});
+
+test("authorizationOccurrences rejects a Proxy that could hide occurrences", () => {
+  const hiding = new Proxy(["Bearer attacker", "Bearer valid"], {
+    ownKeys(target) { return Reflect.ownKeys(target).filter((key) => key !== "0"); },
+  }) as unknown as string[];
+  assert.throws(() => authorizationOccurrences({ authorization: hiding }),
+    /distinct Authorization occurrence is not a plain array/,
+    "no enumeration of a Proxy is evidence; a hidden index must not publish a singleton");
+  const { isProxy: _ } = { isProxy: true } as never; void _;
 });

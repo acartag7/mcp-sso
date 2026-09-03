@@ -2,6 +2,7 @@
 // (contracts §9.6). Normalized request/response shapes so the Bridge logic is
 // framework-agnostic, plus OAuthError → response mapping and subject resolution.
 
+import { isProxy } from "node:util/types";
 import type { BridgeConfig } from "../config.ts";
 import { originOf } from "../config.ts";
 import { OAuthError, oauthErrorBody } from "../errors.ts";
@@ -115,9 +116,15 @@ export function authorizationOccurrences(
 /** Read each element exactly once, validate and publish that snapshot: an
  *  accessor-backed array cannot show one value at validation, another at publication. */
 function validatedOccurrences(values: readonly unknown[], source: string): string[] {
-  // Object.values reads each own element exactly once and never consults a
-  // length the input could lie about, so a faked-empty array still publishes
-  // its present elements and a lying-large one adds nothing.
+  // A Proxy is rejected outright: its ownKeys, length, and element traps are
+  // all attacker-controlled, so NO enumeration of it is evidence — one that
+  // hides an index would publish a singleton for a duplicate occurrence.
+  // Everything else that passes Array.isArray is a real array whose own keys
+  // cannot lie; Object.values then reads each own element exactly once and
+  // never consults a length the input could redefine.
+  if (isProxy(values)) {
+    throw new TypeError(`${source} Authorization occurrence is not a plain array`);
+  }
   const snapshot: unknown[] = Object.values(values);
   if (!snapshot.every((entry) => typeof entry === "string")) {
     throw new TypeError(`${source} Authorization occurrence is not a string`);
