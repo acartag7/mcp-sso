@@ -83,7 +83,7 @@ sequenceDiagram
 The bridge issues tokens. The verifier is what your `/mcp` handler calls. This fragment shows the shape; the complete, tested composition is [`examples/fastify-sqlite/`](examples/fastify-sqlite/).
 
 ```ts
-import { RequestAuthorizer, buildUnauthorizedChallenge, OAuthError, SystemClock, noopAudit } from "mcp-sso";
+import { RequestAuthorizer, authorizationOccurrences, buildUnauthorizedChallenge, OAuthError, SystemClock, noopAudit } from "mcp-sso";
 
 // `config` is the BridgeConfig you built with createBridgeConfig().
 const authorizer = new RequestAuthorizer({ config, clock: new SystemClock(), audit: noopAudit });
@@ -91,7 +91,13 @@ const authorizer = new RequestAuthorizer({ config, clock: new SystemClock(), aud
 app.post("/mcp", async (request, reply) => {
   let auth;
   try {
-    auth = await authorizer.authorize({ authorization: request.headers.authorization, requiredScope: "mcp:read" });
+    // authorizationOccurrences passes the raw Authorization occurrence array into
+    // RequestAuthorizer (§8.4): a framework-normalized scalar would let a duplicated
+    // Authorization header silently select one of the two credentials.
+    auth = await authorizer.authorize({
+      authorization: authorizationOccurrences(request.raw.headersDistinct, request.headers),
+      requiredScope: "mcp:read",
+    });
   } catch (error) {
     const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
     reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
