@@ -61,9 +61,9 @@ There is exactly one runtime dependency by design ([§15](contracts/15-package-a
 
 Dev tooling with **no added dependency**: the test runner is `node:test` (built in), assertions `node:assert/strict` (built in), the SQLite store uses `node:sqlite` (built in). No bundler, no test framework, no postinstall, ever.
 
-## Transitive advisory sweep (2026-08-15)
+## Transitive advisory sweep (opened 2026-08-15, re-dated 2026-09-03)
 
-An OSV/Dependabot scan flagged 8 published advisories. Every one sits in a **dev-tree transitive dependency** (reachable only from `devDependencies` roots: `fastify`, `@modelcontextprotocol/sdk`). `package.json#dependencies` still contains exactly `jose`, so none of these packages ships in the published artifact. Resolution:
+The 2026-08-15 OSV/Dependabot scan flagged 8 published advisories, every one in a **dev-tree transitive dependency** (reachable only from `devDependencies` roots: `fastify`, `@modelcontextprotocol/sdk`); `package.json#dependencies` still contains exactly `jose`, so none of these packages ships in the published artifact. The 2026-09-03 recheck during the fastify 5.12.1 adoption added four further fast-uri advisories (published 2026-08, all affecting below 3.1.6) and re-resolved two rows that the bump moved; the August receipt is preserved as the rows' original dates, not re-dated. Resolution:
 
 | Transitive package (via) | Was | Now | Advisories | Path |
 |---|---|---|---|---|
