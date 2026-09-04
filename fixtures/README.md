@@ -32,4 +32,5 @@ FREEZE-LOG.md                every change to a frozen fixture, with the contract
 
 ## Status
 
-Bootstrap. Two frozen fixtures exist, both for clause 8.4, and the reference runner executes them in CI: the portable fixture on Fastify, Express, and Hono, and the host fixture on Fastify. No other clause is covered, and no official-suite receipt exists yet. See §19.11.
+Bootstrap. Four fixtures exist for clause 8.4, covering its three input classes: the original two are `frozen` with receipts, and the exactly-one and zero-occurrence additions are `draft` until a main commit whose CI ran them unchanged exists. The reference runner executes all of them in CI: each portable fixture on Fastify, Express, and Hono, and the host fixture on Fastify. No `MANIFEST.json`, further parity evidence, or official-suite receipt exists yet. See §19.11.
+

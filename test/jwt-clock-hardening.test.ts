@@ -521,3 +521,28 @@ test("Bridge.handleApprove reuses one snapshot for expiry rejection and audit", 
     await store.close();
   }
 });
+
+// §8.4's array rule at the verifier boundary. The wire cannot express a
+// zero-element Authorization occurrence list distinctly from an absent header,
+// so these input classes are unreachable through HTTP fixtures; the contract
+// sentence is exercised here, where the input type exists.
+test("RequestAuthorizer fails closed on the zero- and many-element authorization arrays", async () => {
+  const clock = new ScriptedClock([NOW_MS, NOW_MS]);
+  const audit = new MemoryAudit();
+  const authorizer = new RequestAuthorizer({ config, clock, audit });
+  const token = `Bearer ${await expiredAccessToken()}`;
+  await assert.rejects(
+    authorizer.authorize({ authorization: [] }),
+    (error) => {
+      assert.ok(isOAuth("invalid_token", 401)(error));
+      assert.match(String((error as Error).message), /must occur exactly once/,
+        "the zero-element array takes the ambiguity rejection, not the absent-header one");
+      return true;
+    },
+  );
+  await assert.rejects(
+    authorizer.authorize({ authorization: [token, token] }),
+    isOAuth("invalid_token", 401),
+    "two occurrences must fail closed before any first or last selection",
+  );
+});

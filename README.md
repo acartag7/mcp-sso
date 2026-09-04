@@ -83,7 +83,7 @@ sequenceDiagram
 The bridge issues tokens. The verifier is what your `/mcp` handler calls. This fragment shows the shape; the complete, tested composition is [`examples/fastify-sqlite/`](examples/fastify-sqlite/).
 
 ```ts
-import { RequestAuthorizer, buildUnauthorizedChallenge, OAuthError, SystemClock, noopAudit } from "mcp-sso";
+import { RequestAuthorizer, authorizationOccurrences, buildUnauthorizedChallenge, OAuthError, SystemClock, noopAudit } from "mcp-sso";
 
 // `config` is the BridgeConfig you built with createBridgeConfig().
 const authorizer = new RequestAuthorizer({ config, clock: new SystemClock(), audit: noopAudit });
@@ -91,7 +91,13 @@ const authorizer = new RequestAuthorizer({ config, clock: new SystemClock(), aud
 app.post("/mcp", async (request, reply) => {
   let auth;
   try {
-    auth = await authorizer.authorize({ authorization: request.headers.authorization, requiredScope: "mcp:read" });
+    // authorizationOccurrences passes the raw Authorization occurrence array into
+    // RequestAuthorizer (§8.4): a framework-normalized scalar would let a duplicated
+    // Authorization header silently select one of the two credentials.
+    auth = await authorizer.authorize({
+      authorization: authorizationOccurrences(request.raw.headersDistinct, request.headers),
+      requiredScope: "mcp:read",
+    });
   } catch (error) {
     const oe = error instanceof OAuthError ? error : new OAuthError("invalid_token", "Bearer token is invalid", 401);
     reply.header("www-authenticate", buildUnauthorizedChallenge(config, { scope: config.scopeCatalog, error: oe.code, errorDescription: oe.message }));
@@ -101,7 +107,7 @@ app.post("/mcp", async (request, reply) => {
 });
 ```
 
-`RequestAuthorizer.authorize` fails closed. A missing token, a wrong audience, an expired token, or a missing scope throws an `OAuthError` whose `status` is 401 or 403. There is no local or unauthenticated mode. The tested example reads the header through `headersFromDistinct` so that a duplicated `Authorization` header is rejected instead of silently collapsed; this fragment reads it the plain way. Start from the example when you wire your own route.
+`RequestAuthorizer.authorize` fails closed. A missing token, a wrong audience, an expired token, or a missing scope throws an `OAuthError` whose `status` is 401 or 403. There is no local or unauthenticated mode. Both the tested example and the fragment above read the header through `authorizationOccurrences(request.raw.headersDistinct, ...)`, which passes the raw `Authorization` occurrence array into `RequestAuthorizer` so a duplicated header is rejected instead of silently collapsed. Never pass `request.headers.authorization` directly: the framework-normalized scalar has already discarded every occurrence but one.
 
 ## What ships
 

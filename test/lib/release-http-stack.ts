@@ -11,6 +11,7 @@ import { createOAuthRouter } from "../../src/adapters/express.ts";
 import { registerOAuthRoutes } from "../../src/adapters/fastify.ts";
 import { createOAuthApp } from "../../src/adapters/hono.ts";
 import { headersFromDistinct, isMcpPath, readHeader } from "../../src/adapters/http.ts";
+import { authorizationOccurrences } from "../../src/adapters/authorization-occurrences.ts";
 import type { UpstreamRedirectFlow } from "../../src/adapters/upstream-flow.ts";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { originOf, type BridgeConfig } from "../../src/config.ts";
@@ -74,7 +75,7 @@ async function serveMcp(req: IncomingMessage, res: ServerResponse, parsedBody: u
   let subject: string;
   try {
     subject = (await authorizer.authorize({
-      authorization: headersFromDistinct(req.headersDistinct, req.headers).authorization,
+      authorization: authorizationOccurrences(req.headersDistinct, req.headers),
     })).subject;
   }
   catch (error) {

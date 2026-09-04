@@ -1,0 +1,92 @@
+{
+  "id": "08-resource-server-verifier/8.4-single-authorization-succeeds-portable",
+  "kind": "fixture",
+  "profile": "portable",
+  "contract": {
+    "section": "08",
+    "clause": "8.4",
+    "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
+  },
+  "status": "draft",
+  "notes": "Exactly-one input class of the quoted sentence. The runner delivers the single occurrence to RequestAuthorizer as a one-element array, the same raw-occurrence boundary every shipped composition root uses (the host does not collapse it to the scalar a normalized header map would), so an implementation that accepts scalar authorization but rejects a one-element array fails here, as does one that rejects every bearer request. Reaches the protected handler and returns its declared 204.",
+  "given": {
+    "config": {
+      "issuer": "https://api.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:read",
+        "mcp:write"
+      ],
+      "defaultScopes": [
+        "mcp:read"
+      ],
+      "allowedOrigins": [
+        "https://api.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": {
+      "seed": "fixture-08-8.4-portable-single-0001"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "protectedResource": {
+      "requiredScope": null,
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": {
+          "absent": true
+        }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "POST",
+      "path": "/mcp",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6ImZpeHR1cmUtc2lnbmluZy1rZXktMSIsInR5cCI6IkpXVCJ9.eyJjbGllbnRfaWQiOiJmaXh0dXJlLWNsaWVudC0wOC04LTQtcG9ydGFibGUtZmlyc3QiLCJzY29wZSI6Im1jcDpyZWFkIiwiaXNzIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20iLCJzdWIiOiJmaXh0dXJlLXN1YmplY3QtMDgtOC00LXBvcnRhYmxlLWZpcnN0IiwiYXVkIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS5jb20vbWNwIiwiaWF0IjoxNzg3NzQ1NjAwLCJleHAiOjE3ODc3NDU5MDB9.LM_NPRTUiH_pxj8sgSgcI9pJ_XdbVNjJ5CVNOtYYie7bnEnpPHmRMMK_NtVV9lHnKcJ_R-G7eSgKvIkqVcSTvQ",
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18"
+      },
+      "body": {
+        "json": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "initialize",
+          "params": {}
+        }
+      }
+    }
+  },
+  "then": {
+    "status": 204,
+    "headers": {},
+    "outbound": []
+  }
+}

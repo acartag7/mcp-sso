@@ -278,11 +278,18 @@ test("a chain shares captures between members", async () => {
 test("the section 8.4 fixtures load with bound ids and clauses", async () => {
   const corpus = await loadCorpus();
   for (const id of ["08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable",
-    "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed"]) {
+    "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed",
+    "08-resource-server-verifier/8.4-single-authorization-succeeds-portable",
+    "08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable"]) {
     const fixture = corpus.find((candidate) => candidate.id === id);
     assert.ok(fixture, `${id} missing from the corpus`);
     assert.equal(fixture.kind, "fixture");
-    assert.equal(fixture.status, "frozen");
+    // The original pair froze in the manifest-replacement pull request; the
+    // two input-class additions stay draft until their own freeze flip.
+    const expected = id.includes("single-authorization") || id.includes("zero-authorization")
+      ? "draft"
+      : "frozen";
+    assert.equal(fixture.status, expected);
     assert.equal(fixture.contract.section, "08");
     assert.equal(fixture.contract.clause, "8.4");
   }

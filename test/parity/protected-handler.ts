@@ -2,6 +2,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import { buildUnauthorizedChallenge } from "../../src/challenge.ts";
 import { originOf, type BridgeConfig } from "../../src/config.ts";
 import { headersFromDistinct, readHeader } from "../../src/adapters/http.ts";
+import { authorizationOccurrences } from "../../src/adapters/authorization-occurrences.ts";
 import { OAuthError } from "../../src/errors.ts";
 import type { RequestAuthorizer } from "../../src/verifier.ts";
 import { FixtureRunnerError } from "./error.ts";
@@ -50,7 +51,7 @@ export async function protectedOutcome(input: ProtectedOutcomeInput): Promise<Ho
   if (originRejected(headers, config)) return jsonRpcOutcome(403, ORIGIN_REJECTED);
   try {
     await authorizer.authorize({
-      authorization: headers.authorization,
+      authorization: authorizationInput(input),
       ...protectedResource.requiredScope === null
         ? {}
         : { requiredScope: protectedResource.requiredScope },
@@ -66,6 +67,15 @@ export async function protectedOutcome(input: ProtectedOutcomeInput): Promise<Ho
     headers: responseHeaders,
     body: encodeResponseBody(success.body, responseHeaders),
   };
+}
+
+/** §8.4: every shipped composition root passes the raw Authorization
+ *  occurrence array into RequestAuthorizer, never a framework's normalized
+ *  first value. The host delivers the same boundary through the same exported
+ *  helper the shipped roots use, so the fixture boundary and the product
+ *  boundary cannot drift apart. */
+function authorizationInput(input: ProtectedOutcomeInput): string | string[] | undefined {
+  return authorizationOccurrences(input.distinct, input.normalized);
 }
 
 /** Read the mount's headers through the library's own precedence: `distinct`
