@@ -32,7 +32,7 @@ jobs:
           cache: pnpm
       # JS/TS CodeQL extracts from source; installing resolves modules for richer analysis.
       - run: pnpm install --frozen-lockfile
-      - uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6 (2026-08-04)
+      - uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.6 (2026-08-04)
         with:
           languages: javascript-typescript
       - uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6 (2026-08-04)
