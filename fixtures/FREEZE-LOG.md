@@ -21,3 +21,21 @@ This file is append-only. Each entry records a change to a frozen fixture or a b
 ## 2026-09-07 Authorization occurrence freeze
 
 `08-resource-server-verifier/8.4-single-authorization-succeeds-portable` and `08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable` became frozen under §19.4. Their executable content is unchanged from `3f3fb6e111ac7141b81704ad972e09e0dc2a84c5`. [CI run 33821090439](https://github.com/acartag7/mcp-sso/actions/runs/33821090439) passed both through Fastify, Express, and Hono on 2026-09-04. The complete parity run passed 10 executions with zero failures and zero skips. Receipts name mcp-sso 0.5.0 at that commit and run date. Only `status` and `receipt` changed in these fixtures.
+
+## 2026-09-07 bearer input freeze
+
+The following 13 portable fixtures became frozen under §19.4. Their executable content is unchanged from `fee79add342382b80c5d7316739e35547bd53b42`. [CI run 34161390005](https://github.com/acartag7/mcp-sso/actions/runs/34161390005) passed the complete corpus on that main commit on 2026-09-07: 49 executions, zero failures and zero skips. Each portable fixture ran through Fastify, Express, and Hono. Receipts name mcp-sso 0.5.0 at that commit and run date. Only `status` and `receipt` changed in these fixtures. This freeze does not establish complete verifier coverage or a published corpus version.
+
+- `08-resource-server-verifier/8.4-bearer-with-extra-value-portable`
+- `08-resource-server-verifier/8.4-bearer-without-separator-portable`
+- `08-resource-server-verifier/8.4-bearer-without-token-portable`
+- `08-resource-server-verifier/8.4-blank-authorization-portable`
+- `08-resource-server-verifier/8.4-coalesced-authorization-portable`
+- `08-resource-server-verifier/8.4-duplicate-empty-then-valid-portable`
+- `08-resource-server-verifier/8.4-duplicate-invalid-then-valid-portable`
+- `08-resource-server-verifier/8.4-duplicate-valid-then-empty-portable`
+- `08-resource-server-verifier/8.4-duplicate-valid-then-invalid-portable`
+- `08-resource-server-verifier/8.4-empty-authorization-portable`
+- `08-resource-server-verifier/8.4-lowercase-bearer-succeeds-portable`
+- `08-resource-server-verifier/8.4-token-without-bearer-scheme-portable`
+- `08-resource-server-verifier/8.4-wrong-authorization-scheme-portable`
