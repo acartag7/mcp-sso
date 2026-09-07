@@ -61,3 +61,16 @@ The following §19.7 receipt covers verifier-boundary and shipped-composition ob
 - §8.4 observations: direct zero-element and one-element Authorization arrays; one clock snapshot on success and expiry rejection; invalid initial snapshot with no audit; throwing audit sinks; the real Fastify limiter's denial, malformed counter, throwing accessor, rejected-thenable and single-read behavior; both runnable examples' Origin/budget ordering and proxy trust; generated-starter construction and spawned SDK flow.
 
 The corpus host supplies a fixed canonical clock, preserves wire Authorization occurrences, and uses its own protected handler without the Fastify rate-limit plugin. It cannot express an invalid or changing clock, distinguish an empty array from an absent wire header, preserve limiter state across requests, or select the shipped example/generated-starter entrypoints. Those observations therefore retain the suite evidence form. Tests in the command that exercise later bridge or identity behavior do not extend this verifier coverage claim.
+
+### Direct verifier result and header-boundary receipt
+
+This §19.7 receipt adds non-HTTP observations for §8.1 and §8.4. It is suite evidence, not portable fixture coverage.
+
+- Suite: repository verifier boundary suites at `b7dfeede2a779bb041aa4e9414f7c855b3c7d577`; implementation: mcp-sso 0.5.0 at that commit, reachable from `main`.
+- Run date: 2026-09-07. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/adapters-http.test.ts test/jwt-clock-hardening.test.ts test/oauth.test.ts test/identity-subject-jwt.test.ts`.
+- Result: 92 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+- §8.1 observations: the verified machine triad returns `credentialKind: "machine"`; partial or conflicting markers fail; a client-selected `mcc_` client identifier without a machine subject remains interactive. Authorization-code and refresh results retain the interactive kind.
+- §8.4 observations: the single clock snapshot also owns the audit timestamp; malformed initial clocks emit no fabricated timestamp; `authorizationOccurrences` preserves raw multiplicity and rejects malformed, accessor-backed, sparse, proxy-backed, or ambiguous normalized header sources without first/last selection.
+
+The HTTP host observes handler admission but discards the returned `VerifiedAccessToken` object. Wire header maps cannot carry JavaScript getters, proxies, or malformed array descriptors. These observations therefore retain the suite form. The fixed-clock, limiter, and shipped-composition limits in the preceding receipt still apply. Neither receipt establishes complete §8.4 or first-slice coverage.
