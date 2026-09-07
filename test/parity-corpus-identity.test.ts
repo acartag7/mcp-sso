@@ -122,8 +122,8 @@ test("loadCorpus resolves the default fixture root outside the process working d
   try {
     const moduleUrl = new URL("./parity/corpus.ts", import.meta.url).href;
     const expectedIds = (await loadCorpus()).map(({ id }) => id);
-    const script = `import assert from "node:assert/strict"; const { loadCorpus } = await import(${JSON.stringify(moduleUrl)}); const fixtures = await loadCorpus(); assert.deepEqual(fixtures.map(({ id }) => id), ${JSON.stringify(expectedIds)});`;
-    await execFileAsync(process.execPath, ["--input-type=module", "--eval", script], { cwd: directory });
+    const script = `import assert from "node:assert/strict"; const { loadCorpus } = await import(process.argv[1]); const fixtures = await loadCorpus(); assert.deepEqual(fixtures.map(({ id }) => id), JSON.parse(process.argv[2]));`;
+    await execFileAsync(process.execPath, ["--input-type=module", "--eval", script, moduleUrl, JSON.stringify(expectedIds)], { cwd: directory });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
