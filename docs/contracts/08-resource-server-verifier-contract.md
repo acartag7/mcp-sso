@@ -74,3 +74,14 @@ This §19.7 receipt adds non-HTTP observations for §8.1 and §8.4. It is suite 
 - §8.4 observations: the single clock snapshot also owns the audit timestamp; malformed initial clocks emit no fabricated timestamp; `authorizationOccurrences` preserves raw and case-duplicate multiplicity for rejection by `RequestAuthorizer`, ignores sparse holes while preserving present entries, and rejects malformed values, accessors, and proxies before first/last selection.
 
 The HTTP host observes handler admission but discards the returned `VerifiedAccessToken` object. Wire header maps cannot carry JavaScript getters, proxies, or malformed array descriptors. These observations therefore retain the suite form. The fixed-clock, limiter, and shipped-composition limits in the preceding receipt still apply. Neither receipt establishes complete §8.4 or first-slice coverage.
+
+### Scope policy receipt
+
+This §19.7 receipt records direct-helper and returned-result observations for §8.3 and §8.4. It is suite evidence, not portable fixture coverage.
+
+- Suite: repository scope policy suites at `2674e790cd9f9e028566c7859a4f33153268278b`; implementation: mcp-sso 0.5.0 at that commit, reachable from `main`.
+- Run date: 2026-09-07. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/scope-hierarchy.test.ts test/config-snapshot.test.ts`.
+- Result: 12 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The direct `requireScope` helper refuses implication through an unvalidated clone, while exact membership still works. `RequestAuthorizer` applies the validated hierarchy and returns the original granted scopes without adding implied scopes. HTTP fixtures observe admission and the challenge, but their protected handler discards that returned object. JSON boot input cannot represent the validated policy object's identity.
