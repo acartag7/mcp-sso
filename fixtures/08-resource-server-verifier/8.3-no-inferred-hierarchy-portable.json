@@ -7,7 +7,7 @@
     "clause": "8.3",
     "quote": "The adapter emits a 403 whose `WWW-Authenticate` carries the same `resource_metadata` + `scope` + `error=\"insufficient_scope\"` so the client can step up and re-authorize for the missing scope."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "Resource authorization uses an otherwise valid corpus-signed token. Challenge discovery permits the recorded root/path metadata delta.",
   "given": {
     "config": {
@@ -93,5 +93,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "cd46d3dfd87dcc4efbdd698b024c5525c182700f",
+    "date": "2026-09-07"
   }
 }

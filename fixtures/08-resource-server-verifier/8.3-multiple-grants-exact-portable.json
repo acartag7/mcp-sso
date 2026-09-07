@@ -7,7 +7,7 @@
     "clause": "8.3",
     "quote": "With no explicit hierarchy it uses exact membership."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "The first scope does not satisfy the required scope. The second scope does, so selecting only the first claim member fails this positive control.",
   "given": {
     "config": {
@@ -93,5 +93,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "cd46d3dfd87dcc4efbdd698b024c5525c182700f",
+    "date": "2026-09-07"
   }
 }
