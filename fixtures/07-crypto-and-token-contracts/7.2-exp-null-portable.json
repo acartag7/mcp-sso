@@ -7,7 +7,7 @@
     "clause": "7.2",
     "quote": "Verified with `algorithms: [\"ES256\"]`, pinned iss + **aud=resource** (fail-closed: a token whose `aud` ≠ resource is `invalid_token`, never accepted), clock from `ClockPort`."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "exp-null input class. Other token claims, signing material, configuration, and request admission use the valid control. The challenge permits root or path-inserted discovery under the recorded metadata-location delta.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "c6fe2bd7ae3b0e2b7bf0de69dc350d738a91a90e",
+    "date": "2026-09-07"
   }
 }

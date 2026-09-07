@@ -7,7 +7,7 @@
     "clause": "8.1",
     "quote": "`credentialKind` is `\"machine\"` only when all three machine bindings hold: `sub` starts with the reserved `mcc_` namespace, `client_id === sub`, and `gty === \"client_credentials\"`."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "complete-machine-triad input class. Other token claims, signing material, configuration, and request admission use the valid control. The reserved mcc_ identity binding pins the reference envelope; HTTP observes admission, while the returned credentialKind remains suite evidence.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "c6fe2bd7ae3b0e2b7bf0de69dc350d738a91a90e",
+    "date": "2026-09-07"
   }
 }
