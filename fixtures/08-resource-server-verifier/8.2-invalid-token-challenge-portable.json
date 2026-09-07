@@ -7,7 +7,7 @@
     "clause": "8.2",
     "quote": "`scope` = space-joined `scopeCatalog` (tells the client what it may request)."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "The challenge advertises the complete catalog, independent of defaults. Root and path-inserted locations are both admitted under D1; issuer and resource origins differ.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "47967f3f9a6725ba5a74cad6149d0bd70315807e",
+    "date": "2026-09-07"
   }
 }

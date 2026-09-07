@@ -7,7 +7,7 @@
     "clause": "8.2",
     "quote": "`scope` = space-joined `scopeCatalog` (tells the client what it may request)."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "The origin-root metadata URL pins the reference location under D1. Issuer and resource origins differ.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "47967f3f9a6725ba5a74cad6149d0bd70315807e",
+    "date": "2026-09-07"
   }
 }
