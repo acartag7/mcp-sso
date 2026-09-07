@@ -7,7 +7,7 @@
     "clause": "8.2",
     "quote": "`error`/`error_description` included when the rejection reason is known (`invalid_token`, `invalid_request`, `insufficient_scope`)."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "A valid token lacks the caller-supplied required scope. The exact reference error description, including its escaped quote and backslash, is host behavior; this does not make that diagnostic text a portable requirement.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "47967f3f9a6725ba5a74cad6149d0bd70315807e",
+    "date": "2026-09-07"
   }
 }

@@ -7,7 +7,7 @@
     "clause": "9.1",
     "quote": "**JWKS** at `${issuer}/oauth/jwks`: `{ keys: [publicJwk(config)] }` (ES256 public key, with `cache-control: public, max-age=60`)."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "Public JWKS exposes the configured corpus verification key and cache lifetime, with no EC private component. Additional public JWK extension members are not pinned.",
   "given": {
     "config": {
@@ -135,5 +135,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "47967f3f9a6725ba5a74cad6149d0bd70315807e",
+    "date": "2026-09-07"
   }
 }

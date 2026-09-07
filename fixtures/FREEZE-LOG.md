@@ -205,3 +205,21 @@ The following 86 portable fixtures became frozen under §19.4: 17 HTTP fixtures 
 - `11-scope-contract/11-hierarchy-unknown-granted-portable` (portable)
 - `11-scope-contract/11-hierarchy-unknown-target-portable` (portable)
 - `11-scope-contract/11-hierarchy-wrong-resource-portable` (portable)
+
+## 2026-09-07 discovery and challenge freeze
+
+The following 13 HTTP fixtures became frozen under §19.4: seven portable and six host. Their executable content is unchanged from `47967f3f9a6725ba5a74cad6149d0bd70315807e`. [CI run 34168601529](https://github.com/acartag7/mcp-sso/actions/runs/34168601529) passed the complete corpus on that main commit on 2026-09-07: 394 executions, zero failures and zero skips. Each portable HTTP fixture ran through Fastify, Express, and Hono; each host fixture ran through Fastify. Receipts name mcp-sso 0.5.0 at that commit and run date. Only `status` and `receipt` changed in these fixtures. This freeze does not establish complete verifier coverage or a published corpus version.
+
+- `08-resource-server-verifier/8.2-invalid-token-challenge-portable` (portable)
+- `08-resource-server-verifier/8.2-missing-token-challenge-portable` (portable)
+- `08-resource-server-verifier/8.2-quoted-step-up-description-host` (host)
+- `08-resource-server-verifier/8.2-resource-origin-challenge-host` (host)
+- `09-as-lite-bridge-contract/9.1-as-metadata-portable` (portable)
+- `09-as-lite-bridge-contract/9.1-as-metadata-single-scope-portable` (portable)
+- `09-as-lite-bridge-contract/9.1-prm-nested-route-path-identity-host` (host)
+- `09-as-lite-bridge-contract/9.1-prm-nested-route-portable` (portable)
+- `09-as-lite-bridge-contract/9.1-prm-nested-route-root-identity-host` (host)
+- `09-as-lite-bridge-contract/9.1-prm-route-path-identity-host` (host)
+- `09-as-lite-bridge-contract/9.1-prm-route-portable` (portable)
+- `09-as-lite-bridge-contract/9.1-prm-route-root-identity-host` (host)
+- `09-as-lite-bridge-contract/9.1-public-jwks-portable` (portable)
