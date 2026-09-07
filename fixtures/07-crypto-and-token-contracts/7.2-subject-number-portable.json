@@ -91,6 +91,22 @@
         "matches": "^Bearer resource_metadata=\"https://api\\.example\\.com/\\.well-known/oauth-protected-resource(/mcp)?\", scope=\"mcp:read mcp:write\", error=\"invalid_token\"(, error_description=\"[^\"]*\")?$"
       }
     },
-    "outbound": []
+    "outbound": [],
+    "audit": {
+      "events": [
+        {
+          "occurredAt": "2026-08-26T12:00:00.000Z",
+          "event": "auth.request",
+          "status": "failure",
+          "reason": "invalid_token"
+        }
+      ],
+      "absent": [
+        {
+          "event": "auth.request",
+          "status": "success"
+        }
+      ]
+    }
   }
 }
