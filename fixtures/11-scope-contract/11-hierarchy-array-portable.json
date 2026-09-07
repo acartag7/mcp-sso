@@ -1,0 +1,69 @@
+{
+  "id": "11-scope-contract/11-hierarchy-array-portable",
+  "kind": "boot",
+  "profile": "portable",
+  "contract": {
+    "section": "11",
+    "clause": "11",
+    "quote": "Boot admits at most 128 granted rows and 4,096 direct edges, and rejects empty rows, duplicates, self-references, cycles, unknown catalog scopes, malformed or extra members, and a resource binding that is not byte-for-byte equal to `BridgeConfig.resource`."
+  },
+  "status": "draft",
+  "notes": "Literal scope configuration at createBridgeConfig. Acceptance controls and rejection cases share valid corpus signing material and unrelated configuration.",
+  "given": {
+    "config": {
+      "issuer": "https://auth.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:read",
+        "mcp:write",
+        "mcp:admin"
+      ],
+      "defaultScopes": [
+        "mcp:read"
+      ],
+      "allowedOrigins": [
+        "https://auth.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300,
+      "scopeHierarchy": []
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": {
+      "seed": "11-scope-contract/11-hierarchy-array-portable"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "entrypoint": "createBridgeConfig"
+  },
+  "then": {
+    "boot": {
+      "outcome": "rejected",
+      "error": {
+        "code": "invalid_auth_config"
+      }
+    },
+    "outbound": []
+  }
+}

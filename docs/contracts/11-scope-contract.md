@@ -8,3 +8,14 @@
 - `scopeHierarchy` (optional config) is a bounded, immutable implication graph for the exact `BridgeConfig.resource`. Each `granted → implies` edge says a token carrying the broader `granted` scope satisfies the directly narrower scope. Reachability is transitive. Boot admits at most 128 granted rows and 4,096 direct edges, and rejects empty rows, duplicates, self-references, cycles, unknown catalog scopes, malformed or extra members, and a resource binding that is not byte-for-byte equal to `BridgeConfig.resource`. Omission or an empty graph means exact membership, never an inferred hierarchy.
 - `requireScope(auth, required, hierarchy?)` → 403 `insufficient_scope` step-up (§8.3). The helper remains exact unless the caller explicitly passes a validated hierarchy. With one, an exact grant or a transitively implied grant succeeds. `RequestAuthorizer` passes its validated config policy. It does not infer relationships from scope names. The graph applies only at resource authorization: tokens continue to carry the scopes actually granted, so implication does not mint or accumulate additional scope strings.
 - **Accumulation applies only to opaque clients under stored DCR.** Re-authorization unions the requested scopes with scopes derived from active refresh-token records for `(subject, clientId)` (§9.3); there is no separate grant store. Stateless DCR and every scheme-shaped CIMD `client_id` use `priorScopes = []`. The consent UI shows only the new-scope delta. The core supplies the before and after sets; the adapter renders them.
+
+## Suite evidence
+
+This §19.7 receipt records the scope policy's snapshot and direct-helper behavior. It does not cover the later bridge scope normalization, issuance, or accumulation slice, and it is not portable fixture coverage.
+
+- Suite: repository scope policy suites at `2674e790cd9f9e028566c7859a4f33153268278b`; implementation: mcp-sso 0.5.0 at that commit, reachable from `main`.
+- Run date: 2026-09-07. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/scope-hierarchy.test.ts test/config-snapshot.test.ts`.
+- Result: 12 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The suite verifies that boot snapshots and deeply freezes the hierarchy's containers, later caller mutation leaves the policy unchanged, and a throwing resource accessor becomes `AuthConfigError`. It also exercises an extra symbol member, which JSON boot fixtures cannot carry. The direct helper accepts implication through the validated policy and refuses an unvalidated clone. `RequestAuthorizer` returns the originally granted scopes after implication succeeds. These object-identity, accessor, mutation, and returned-value observations retain the suite evidence form.
