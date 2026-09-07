@@ -7,7 +7,7 @@
     "clause": "11",
     "quote": "Boot admits at most 128 granted rows and 4,096 direct edges, and rejects empty rows, duplicates, self-references, cycles, unknown catalog scopes, malformed or extra members, and a resource binding that is not byte-for-byte equal to `BridgeConfig.resource`."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "Literal scope configuration at createBridgeConfig. Acceptance controls and rejection cases share valid corpus signing material and unrelated configuration.",
   "given": {
     "config": {
@@ -87,5 +87,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "cd46d3dfd87dcc4efbdd698b024c5525c182700f",
+    "date": "2026-09-07"
   }
 }

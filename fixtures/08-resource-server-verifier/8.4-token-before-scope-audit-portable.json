@@ -7,7 +7,7 @@
     "clause": "8.4",
     "quote": "Extracts the bearer token, verifies it, enforces `requiredScope` if given using the exact-resource `config.scopeHierarchy` when present, audits the outcome, and rethrows `OAuthError` on failure."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "The token expires exactly at the request clock and also lacks the required scope. Token rejection takes precedence and produces one invalid_token failure audit. Other claims and signing material use the valid control.",
   "given": {
     "config": {
@@ -104,5 +104,11 @@
       ],
       "absent": []
     }
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "cd46d3dfd87dcc4efbdd698b024c5525c182700f",
+    "date": "2026-09-07"
   }
 }
