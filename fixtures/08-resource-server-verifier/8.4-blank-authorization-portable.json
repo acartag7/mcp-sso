@@ -7,7 +7,13 @@
     "clause": "8.4",
     "quote": "Extracts the bearer token, verifies it, enforces `requiredScope` if given using the exact-resource `config.scopeHierarchy` when present, audits the outcome, and rethrows `OAuthError` on failure."
   },
-  "status": "draft",
+  "status": "frozen",
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "fee79add342382b80c5d7316739e35547bd53b42",
+    "date": "2026-09-07"
+  },
   "notes": "One whitespace-only field is not a bearer credential.",
   "given": {
     "config": {

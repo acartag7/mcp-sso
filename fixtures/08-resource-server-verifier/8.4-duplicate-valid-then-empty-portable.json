@@ -7,7 +7,13 @@
     "clause": "8.4",
     "quote": "An array-valued `authorization` input preserves distinct header occurrences: exactly one element is processed as the bearer value, while zero elements or more than one element fail closed as `invalid_token` 401 before any first/last-value selection or token verification."
   },
-  "status": "draft",
+  "status": "frozen",
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "fee79add342382b80c5d7316739e35547bd53b42",
+    "date": "2026-09-07"
+  },
   "notes": "An empty trailing occurrence does not permit selection of the valid occurrence.",
   "given": {
     "config": {
