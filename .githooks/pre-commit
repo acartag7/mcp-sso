@@ -235,6 +235,8 @@ fixtures/11-scope-contract/11-hierarchy-129-rows-portable.json,\
 fixtures/11-scope-contract/11-hierarchy-empty-portable.json,\
 fixtures/11-scope-contract/11-hierarchy-4096-edges-portable.json,\
 fixtures/11-scope-contract/11-hierarchy-4097-edges-portable.json,\
+fixtures/08-resource-server-verifier/8.3-multiple-grants-exact-portable.json,\
+fixtures/08-resource-server-verifier/8.3-multiple-grants-implication-portable.json,\
 fixtures/keys/signing-private.pem,\
 fixtures/keys/signing-public.pem,\
 fixtures/FREEZE-LOG.md"
