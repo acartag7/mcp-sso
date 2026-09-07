@@ -32,5 +32,5 @@ FREEZE-LOG.md                every change to a frozen fixture, with the contract
 
 ## Status
 
-Bootstrap. Four fixtures exist for clause 8.4, covering its three input classes: the original two are `frozen` with receipts, and the exactly-one and zero-occurrence additions are `draft` until a main commit whose CI ran them unchanged exists. The reference runner executes all of them in CI: each portable fixture on Fastify, Express, and Hono, and the host fixture on Fastify. No `MANIFEST.json`, further parity evidence, or official-suite receipt exists yet. See §19.11.
+Four frozen fixtures cover the wire-observable Authorization occurrence classes of clause 8.4: three portable fixtures and one host fixture. Each carries a receipt. The zero-element array cannot be distinguished from an absent header over HTTP. Other verifier behavior remains uncovered by frozen fixtures. The reference runner executes all of them in CI: each portable fixture on Fastify, Express, and Hono, and the host fixture on Fastify. No `MANIFEST.json`, further parity evidence, or official-suite receipt exists yet. See §19.11.
 

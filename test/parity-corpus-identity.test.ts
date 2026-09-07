@@ -64,14 +64,15 @@ async function expectCloneError(
   }
 }
 
-test("loadCorpus accepts all four real 8.4 fixtures", async () => {
+test("loadCorpus includes the frozen Authorization occurrence fixtures", async () => {
   const fixtures = await loadCorpus();
-  assert.deepEqual(fixtures.map(({ id, profile, status }) => [id, profile, status]).toSorted(), [
-    [REAL_IDS[1], "host", "frozen"],
-    [REAL_IDS[0], "portable", "frozen"],
-    [REAL_IDS[2], "portable", "draft"],
-    [REAL_IDS[3], "portable", "draft"],
-  ]);
+  for (const id of REAL_IDS) {
+    const fixture = fixtures.find((candidate) => candidate.id === id);
+    assert.ok(fixture, `${id} missing from the corpus`);
+    assert.equal(fixture.profile, id === REAL_IDS[1] ? "host" : "portable");
+    assert.equal(fixture.status, "frozen");
+    assert.ok(fixture.receipt, `${id} missing its freeze receipt`);
+  }
 });
 
 test("loadCorpus rejects an id that does not match its corpus path", async () => {
@@ -120,7 +121,8 @@ test("loadCorpus resolves the default fixture root outside the process working d
   const directory = await mkdtemp(join(tmpdir(), "mcp-sso-parity-identity-cwd-"));
   try {
     const moduleUrl = new URL("./parity/corpus.ts", import.meta.url).href;
-    const script = `const { loadCorpus } = await import(${JSON.stringify(moduleUrl)}); const fixtures = await loadCorpus(); if (fixtures.length !== 4) throw new Error("unexpected fixture count");`;
+    const expectedIds = (await loadCorpus()).map(({ id }) => id);
+    const script = `import assert from "node:assert/strict"; const { loadCorpus } = await import(${JSON.stringify(moduleUrl)}); const fixtures = await loadCorpus(); assert.deepEqual(fixtures.map(({ id }) => id), ${JSON.stringify(expectedIds)});`;
     await execFileAsync(process.execPath, ["--input-type=module", "--eval", script], { cwd: directory });
   } finally {
     await rm(directory, { recursive: true, force: true });

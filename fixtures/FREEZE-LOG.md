@@ -17,3 +17,7 @@ This file is append-only. Each entry records a change to a frozen fixture or a b
 ## 2026-09-02 first freeze
 
 `08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable` and `08-resource-server-verifier/8.4-duplicate-authorization-fails-closed` left `draft` and became the first frozen fixtures, under the §19.4 record amended in the same pull request: receipt, freeze-log entry, and reviewed pull request, with no manifest and no hash lock. The reference runner passed both on `63ed98774c5bbbdd486e1aa9f878c194ca7f1ea3` through Fastify, Express, and Hono (portable) and Fastify (host) with zero skips. Receipts: implementation mcp-sso, version 0.5.0. The executable content of both fixtures is byte-identical to that commit; only `status`, `receipt`, and the host fixture's `notes` changed, the last to drop a sentence calling the fixture a draft. No `given`, `when`, or `then` member changed.
+
+## 2026-09-07 Authorization occurrence freeze
+
+`08-resource-server-verifier/8.4-single-authorization-succeeds-portable` and `08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable` became frozen under §19.4. Their executable content is unchanged from `3f3fb6e111ac7141b81704ad972e09e0dc2a84c5`. [CI run 33821090439](https://github.com/acartag7/mcp-sso/actions/runs/33821090439) passed both through Fastify, Express, and Hono on 2026-09-04. The complete parity run passed 10 executions with zero failures and zero skips. Receipts name mcp-sso 0.5.0 at that commit and run date. Only `status` and `receipt` changed in these fixtures.

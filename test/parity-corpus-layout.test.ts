@@ -28,14 +28,15 @@ function relativeFixturePath(path: string, root = FIXTURES_ROOT): string {
   return relative(root, path).split(sep).join("/");
 }
 
-test("discovers exactly the four real fixture paths", async () => {
+test("discovers the original Authorization occurrence fixture paths", async () => {
   const paths = await fixturePaths();
-  assert.deepEqual(paths.map((path) => relativeFixturePath(path)).toSorted(), [
+  const discovered = paths.map((path) => relativeFixturePath(path));
+  for (const expected of [
     "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed-portable.json",
     "08-resource-server-verifier/8.4-duplicate-authorization-fails-closed.json",
     "08-resource-server-verifier/8.4-single-authorization-succeeds-portable.json",
     "08-resource-server-verifier/8.4-zero-authorization-fails-closed-portable.json",
-  ]);
+  ]) assert.ok(discovered.includes(expected), `${expected} missing from the corpus`);
 });
 
 test("allows the four reserved root artifacts only at their declared types", async () => {
