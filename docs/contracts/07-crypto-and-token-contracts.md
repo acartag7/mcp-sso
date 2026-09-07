@@ -69,3 +69,15 @@ The store remains an availability boundary: if the compensating `revokeRefreshTo
 
 ## 7.5 PKCE S256 (timing-safe)
 `verifyPkceS256(verifier, challenge)` rejects malformed inputs outright (verifier must be 43 to 128 unreserved characters. Challenge must be 43 base64url chars), then compares `base64url(sha256(verifier))` to the stored challenge with `timingSafeEqual`. A 1-char verifier can never match a stored challenge.
+
+## Verifier suite evidence
+
+This §19.7 receipt records direct access-verifier clock observations for §7.2. It is suite evidence, not portable fixture coverage.
+
+- Suite: repository verifier boundary suites at `b7dfeede2a779bb041aa4e9414f7c855b3c7d577`; implementation: mcp-sso 0.5.0 at that commit, reachable from `main`.
+- Run date: 2026-09-07. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/adapters-http.test.ts test/jwt-clock-hardening.test.ts test/oauth.test.ts test/identity-subject-jwt.test.ts`.
+- Result: 92 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+- §7.2 observations: invalid and noncanonical clock snapshots fail as `invalid_token`; one clock read owns verification; the exact expiry boundary remains closed; valid canonical clock boundary controls pass.
+
+The fixed canonical fixture clock cannot express an invalid clock value or a clock that changes between reads. These observations retain the suite form. This receipt does not prove verification-key import counts. Audience-shape coverage remains incomplete. Neither this receipt nor the draft token fixtures establishes complete first-slice coverage. Later consent, issuance, refresh, and bridge tests in the command do not extend this claim.
