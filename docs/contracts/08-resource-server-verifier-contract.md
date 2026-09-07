@@ -85,3 +85,14 @@ This §19.7 receipt records direct-helper and returned-result observations for �
 - Result: 12 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
 
 The direct `requireScope` helper refuses implication through an unvalidated clone, while exact membership still works. `RequestAuthorizer` applies the validated hierarchy and returns the original granted scopes without adding implied scopes. HTTP fixtures observe admission and the challenge, but their protected handler discards that returned object. JSON boot input cannot represent the validated policy object's identity.
+
+### Explicit challenge-options receipt
+
+This §19.7 receipt records the direct challenge builder with an explicit catalog and known `invalid_token` reason. It is suite evidence for §8.2, not portable fixture coverage or complete helper coverage.
+
+- Suite: repository OAuth suite at `41efb9bf8e636e6d147b2a221c3b83bdebf9b03f`; implementation: mcp-sso 0.5.0 at that commit, reachable from `main`.
+- Run date: 2026-09-07. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/oauth.test.ts`.
+- Result: 50 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The named challenge test checks `resource_metadata`, the supplied catalog, `invalid_token`, and the supplied description on the direct helper result. The HTTP host supplies catalog, error, and description on every authorization rejection. It cannot select omitted helper options, an unknown rejection reason, or the direct `invalid_request` option. Those branches remain without a passing suite receipt. Later bridge tests in this command do not extend first-slice coverage. The host also fixes the protected handler at `/mcp`; it does not prove other protected-route layouts or a prefix-mounted authorization server.

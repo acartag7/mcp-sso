@@ -1,0 +1,139 @@
+{
+  "id": "09-as-lite-bridge-contract/9.1-public-jwks-portable",
+  "kind": "fixture",
+  "profile": "portable",
+  "contract": {
+    "section": "09",
+    "clause": "9.1",
+    "quote": "**JWKS** at `${issuer}/oauth/jwks`: `{ keys: [publicJwk(config)] }` (ES256 public key, with `cache-control: public, max-age=60`)."
+  },
+  "status": "draft",
+  "notes": "Public JWKS exposes the configured corpus verification key and cache lifetime, with no EC private component. Additional public JWK extension members are not pinned.",
+  "given": {
+    "config": {
+      "issuer": "https://auth.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:write",
+        "mcp:read"
+      ],
+      "defaultScopes": [
+        "mcp:read"
+      ],
+      "allowedOrigins": [
+        "https://auth.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": {
+      "seed": "09-as-lite-bridge-contract/9.1-public-jwks-portable"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "protectedResource": {
+      "requiredScope": null,
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": {
+          "absent": true
+        }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "GET",
+      "path": "/oauth/jwks",
+      "headers": {
+        "accept": "application/json"
+      }
+    }
+  },
+  "then": {
+    "status": 200,
+    "headers": {
+      "content-type": {
+        "matches": "^application/json(;.*)?$"
+      },
+      "cache-control": {
+        "equals": "public, max-age=60"
+      }
+    },
+    "body": {
+      "schema": {
+        "type": "object",
+        "required": [
+          "keys"
+        ],
+        "properties": {
+          "keys": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "required": [
+                "kty",
+                "crv",
+                "x",
+                "y",
+                "alg",
+                "use",
+                "kid"
+              ],
+              "properties": {
+                "kty": {
+                  "const": "EC"
+                },
+                "crv": {
+                  "const": "P-256"
+                },
+                "x": {
+                  "const": "LzegYqYDh4j0mGy1Svg6XfJXY7ZdpWgIXYIop2_EjfU"
+                },
+                "y": {
+                  "const": "NAevkoEmiNaIuoZv4StVuT2T3qlK-7teGXXwWkmG5LY"
+                },
+                "alg": {
+                  "const": "ES256"
+                },
+                "use": {
+                  "const": "sig"
+                },
+                "kid": {
+                  "const": "fixture-signing-key-1"
+                },
+                "d": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "outbound": []
+  }
+}

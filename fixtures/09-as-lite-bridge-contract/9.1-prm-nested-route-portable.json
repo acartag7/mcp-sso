@@ -1,0 +1,112 @@
+{
+  "id": "09-as-lite-bridge-contract/9.1-prm-nested-route-portable",
+  "kind": "fixture",
+  "profile": "portable",
+  "contract": {
+    "section": "09",
+    "clause": "9.1",
+    "quote": "Emits `resource` (= the configured resource URL), `authorization_servers: [issuer]`, `scopes_supported: catalog`."
+  },
+  "status": "draft",
+  "notes": "Path-inserted discovery is shared under D1. The required metadata fields match the configured resource, issuer, and full catalog. The PRM has no AS jwks_uri; other extension fields are not pinned.",
+  "given": {
+    "config": {
+      "issuer": "https://auth.example.com",
+      "resource": "https://api.example.com/tools/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:write",
+        "mcp:read"
+      ],
+      "defaultScopes": [
+        "mcp:read"
+      ],
+      "allowedOrigins": [
+        "https://auth.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": {
+      "seed": "09-as-lite-bridge-contract/9.1-prm-nested-route-portable"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "protectedResource": {
+      "requiredScope": null,
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": {
+          "absent": true
+        }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "GET",
+      "path": "/.well-known/oauth-protected-resource/tools/mcp",
+      "headers": {
+        "accept": "application/json"
+      }
+    }
+  },
+  "then": {
+    "status": 200,
+    "headers": {
+      "content-type": {
+        "matches": "^application/json(;.*)?$"
+      }
+    },
+    "body": {
+      "schema": {
+        "type": "object",
+        "required": [
+          "resource",
+          "authorization_servers",
+          "scopes_supported"
+        ],
+        "properties": {
+          "resource": {
+            "const": "https://api.example.com/tools/mcp"
+          },
+          "authorization_servers": {
+            "const": [
+              "https://auth.example.com"
+            ]
+          },
+          "scopes_supported": {
+            "const": [
+              "mcp:write",
+              "mcp:read"
+            ]
+          },
+          "jwks_uri": false
+        }
+      }
+    },
+    "outbound": []
+  }
+}
