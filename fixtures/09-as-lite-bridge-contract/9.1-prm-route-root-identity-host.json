@@ -1,0 +1,97 @@
+{
+  "id": "09-as-lite-bridge-contract/9.1-prm-route-root-identity-host",
+  "kind": "fixture",
+  "profile": "host",
+  "contract": {
+    "section": "09",
+    "clause": "9.1",
+    "quote": "Identical JSON at both paths."
+  },
+  "status": "draft",
+  "notes": "Paired root/path fixtures assert the same complete reference JSON. Root-route availability differs under D1; the exact reference response envelope is host evidence.",
+  "given": {
+    "config": {
+      "issuer": "https://auth.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:write",
+        "mcp:read"
+      ],
+      "defaultScopes": [
+        "mcp:read"
+      ],
+      "allowedOrigins": [
+        "https://auth.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": {
+      "seed": "09-as-lite-bridge-contract/9.1-prm-route-root-identity-host"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "protectedResource": {
+      "requiredScope": null,
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": {
+          "absent": true
+        }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "GET",
+      "path": "/.well-known/oauth-protected-resource",
+      "headers": {
+        "accept": "application/json"
+      }
+    }
+  },
+  "then": {
+    "status": 200,
+    "headers": {
+      "content-type": {
+        "matches": "^application/json(;.*)?$"
+      }
+    },
+    "body": {
+      "equals": {
+        "resource": "https://api.example.com/mcp",
+        "authorization_servers": [
+          "https://auth.example.com"
+        ],
+        "scopes_supported": [
+          "mcp:write",
+          "mcp:read"
+        ]
+      }
+    },
+    "outbound": []
+  }
+}

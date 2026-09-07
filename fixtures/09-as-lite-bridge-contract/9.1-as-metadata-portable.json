@@ -1,0 +1,152 @@
+{
+  "id": "09-as-lite-bridge-contract/9.1-as-metadata-portable",
+  "kind": "fixture",
+  "profile": "portable",
+  "contract": {
+    "section": "09",
+    "clause": "9.1",
+    "quote": "Emits `issuer`, `authorization_endpoint`, `token_endpoint`, `jwks_uri`, `registration_endpoint`, `revocation_endpoint`, `response_types_supported: [\"code\"]`, `grant_types_supported: [\"authorization_code\",\"refresh_token\"]`, `code_challenge_methods_supported: [\"S256\"]`, `scopes_supported: catalog`, `token_endpoint_auth_methods_supported: [\"none\"]` (public clients + PKCE), and **`authorization_response_iss_parameter_supported: true`**."
+  },
+  "status": "draft",
+  "notes": "Public AS discovery advertises the configured issuer and baseline public-client PKCE endpoints. Machine and CIMD options are absent. Additional metadata extensions are not pinned.",
+  "given": {
+    "config": {
+      "issuer": "https://auth.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:write",
+        "mcp:read"
+      ],
+      "defaultScopes": [],
+      "allowedOrigins": [
+        "https://auth.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": {
+      "seed": "09-as-lite-bridge-contract/9.1-as-metadata-portable"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "protectedResource": {
+      "requiredScope": null,
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": {
+          "absent": true
+        }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "GET",
+      "path": "/.well-known/oauth-authorization-server",
+      "headers": {
+        "accept": "application/json"
+      }
+    }
+  },
+  "then": {
+    "status": 200,
+    "headers": {
+      "content-type": {
+        "matches": "^application/json(;.*)?$"
+      }
+    },
+    "body": {
+      "schema": {
+        "type": "object",
+        "required": [
+          "issuer",
+          "authorization_endpoint",
+          "token_endpoint",
+          "jwks_uri",
+          "registration_endpoint",
+          "revocation_endpoint",
+          "response_types_supported",
+          "grant_types_supported",
+          "code_challenge_methods_supported",
+          "scopes_supported",
+          "token_endpoint_auth_methods_supported",
+          "authorization_response_iss_parameter_supported"
+        ],
+        "properties": {
+          "issuer": {
+            "const": "https://auth.example.com"
+          },
+          "authorization_endpoint": {
+            "const": "https://auth.example.com/oauth/authorize"
+          },
+          "token_endpoint": {
+            "const": "https://auth.example.com/oauth/token"
+          },
+          "jwks_uri": {
+            "const": "https://auth.example.com/oauth/jwks"
+          },
+          "registration_endpoint": {
+            "const": "https://auth.example.com/oauth/register"
+          },
+          "revocation_endpoint": {
+            "const": "https://auth.example.com/oauth/revoke"
+          },
+          "response_types_supported": {
+            "const": [
+              "code"
+            ]
+          },
+          "grant_types_supported": {
+            "const": [
+              "authorization_code",
+              "refresh_token"
+            ]
+          },
+          "code_challenge_methods_supported": {
+            "const": [
+              "S256"
+            ]
+          },
+          "scopes_supported": {
+            "const": [
+              "mcp:write",
+              "mcp:read"
+            ]
+          },
+          "token_endpoint_auth_methods_supported": {
+            "const": [
+              "none"
+            ]
+          },
+          "authorization_response_iss_parameter_supported": {
+            "const": true
+          }
+        }
+      }
+    },
+    "outbound": []
+  }
+}

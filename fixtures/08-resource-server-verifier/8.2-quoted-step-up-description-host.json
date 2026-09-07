@@ -1,0 +1,96 @@
+{
+  "id": "08-resource-server-verifier/8.2-quoted-step-up-description-host",
+  "kind": "fixture",
+  "profile": "host",
+  "contract": {
+    "section": "08",
+    "clause": "8.2",
+    "quote": "`error`/`error_description` included when the rejection reason is known (`invalid_token`, `invalid_request`, `insufficient_scope`)."
+  },
+  "status": "draft",
+  "notes": "A valid token lacks the caller-supplied required scope. The exact reference error description, including its escaped quote and backslash, is host behavior; this does not make that diagnostic text a portable requirement.",
+  "given": {
+    "config": {
+      "issuer": "https://auth.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:write",
+        "mcp:read"
+      ],
+      "defaultScopes": [
+        "mcp:read"
+      ],
+      "allowedOrigins": [
+        "https://auth.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "2026-08-26T12:00:00.000Z",
+    "random": {
+      "seed": "08-resource-server-verifier/8.2-quoted-step-up-description-host"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "protectedResource": {
+      "requiredScope": "mcp:\"write\\tail",
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": {
+          "absent": true
+        }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "POST",
+      "path": "/mcp",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6ImZpeHR1cmUtc2lnbmluZy1rZXktMSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXN1YmplY3QiLCJjbGllbnRfaWQiOiJmaXh0dXJlLWNsaWVudCIsInNjb3BlIjoibWNwOnJlYWQiLCJpc3MiOiJodHRwczovL2F1dGguZXhhbXBsZS5jb20iLCJhdWQiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9tY3AiLCJpYXQiOjE3ODc3NDU2MDAsImV4cCI6MTc4Nzc0NTkwMH0.cu7cj-SbDR0HsbLNFZsWh_q7pQGWs9DYyQqnmetZdEuqwacforTHzx6RBX5WOJ9o4pI-FXm5AoxqDzAY087Y5g",
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18"
+      },
+      "body": {
+        "json": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "initialize",
+          "params": {}
+        }
+      }
+    }
+  },
+  "then": {
+    "status": 403,
+    "headers": {
+      "www-authenticate": {
+        "equals": "Bearer resource_metadata=\"https://api.example.com/.well-known/oauth-protected-resource\", scope=\"mcp:write mcp:read\", error=\"insufficient_scope\", error_description=\"Missing required scope: mcp:\\\"write\\\\tail\""
+      }
+    },
+    "outbound": []
+  }
+}
