@@ -7,7 +7,7 @@
     "clause": "7.2",
     "quote": "A pre-upgrade signed token whose subject is now outside the domain is `invalid_token`; it cannot reach resource authorization or audit."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "subject-lone-low-surrogate input class. Other token claims, signing material, configuration, and request admission use the valid control. The challenge permits root or path-inserted discovery under the recorded metadata-location delta.",
   "given": {
     "config": {
@@ -108,5 +108,11 @@
         }
       ]
     }
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "c6fe2bd7ae3b0e2b7bf0de69dc350d738a91a90e",
+    "date": "2026-09-07"
   }
 }

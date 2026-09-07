@@ -7,7 +7,7 @@
     "clause": "8.1",
     "quote": "A partial or conflicting binding, or a `gty` whose value is unknown, non-string, or otherwise not exactly `\"client_credentials\"`, is `invalid_token`."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "reserved-pair-missing-grant input class. Other token claims, signing material, configuration, and request admission use the valid control. The reserved mcc_ identity binding pins the reference envelope; HTTP observes admission, while the returned credentialKind remains suite evidence.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "c6fe2bd7ae3b0e2b7bf0de69dc350d738a91a90e",
+    "date": "2026-09-07"
   }
 }
