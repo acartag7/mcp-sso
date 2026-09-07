@@ -52,7 +52,7 @@ Extracts the bearer token, verifies it, enforces `requiredScope` if given using 
 
 ## Suite evidence
 
-The following §19.7 receipt covers verifier-boundary and shipped-composition observations that the HTTP fixtures cannot represent. It is suite evidence, not portable fixture coverage.
+The following §19.7 receipt covers verifier-boundary and shipped-composition observations that the HTTP fixtures cannot represent. It is suite evidence, not portable fixture coverage. The existing frozen fixtures already establish clause-number coverage for §8.4 under §19.4. This receipt adds the observations listed below. It does not establish complete §8.4 or first-slice coverage.
 
 - Suite: repository verifier/admission suites at `e90aa369e0a8b5d4bd626cc105961004f0318fa4`; implementation: mcp-sso 0.5.0 at that commit, reachable from `main`.
 - Run date: 2026-09-07. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile; built package present for the generated-starter tests.
