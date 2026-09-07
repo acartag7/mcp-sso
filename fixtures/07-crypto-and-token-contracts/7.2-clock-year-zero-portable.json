@@ -1,0 +1,96 @@
+{
+  "id": "07-crypto-and-token-contracts/7.2-clock-year-zero-portable",
+  "kind": "fixture",
+  "profile": "portable",
+  "contract": {
+    "section": "07",
+    "clause": "7.2",
+    "quote": "Verified with `algorithms: [\"ES256\"]`, pinned iss + **aud=resource** (fail-closed: a token whose `aud` ≠ resource is `invalid_token`, never accepted), clock from `ClockPort`."
+  },
+  "status": "draft",
+  "notes": "Fixed canonical clock boundary with an otherwise valid ES256 access token. Expiry has no clock-skew allowance.",
+  "given": {
+    "config": {
+      "issuer": "https://api.example.com",
+      "resource": "https://api.example.com/mcp",
+      "consentSigningSecret": "fixture-only-consent-key-00000002",
+      "signingKeyId": "fixture-signing-key-1",
+      "redirectAllowlist": [
+        "https://client.example.com/callback"
+      ],
+      "redirectAllowlistMode": "replace",
+      "scopeCatalog": [
+        "mcp:read",
+        "mcp:write"
+      ],
+      "defaultScopes": [
+        "mcp:read"
+      ],
+      "allowedOrigins": [
+        "https://api.example.com"
+      ],
+      "dcr": {
+        "mode": "stateless"
+      },
+      "accessTokenTtlSeconds": 300,
+      "refreshTokenTtlSeconds": 3600,
+      "consentTokenTtlSeconds": 300,
+      "authorizationCodeTtlSeconds": 300
+    },
+    "clock": "0000-01-01T00:00:00.000Z",
+    "random": {
+      "seed": "07-crypto-and-token-contracts/7.2-clock-year-zero-portable"
+    },
+    "keys": {
+      "signingPrivate": "keys/signing-private.pem",
+      "signingPublic": "keys/signing-public.pem"
+    },
+    "state": {},
+    "http": [],
+    "identity": {
+      "checks": []
+    },
+    "rateLimit": {
+      "checks": []
+    },
+    "protectedResource": {
+      "requiredScope": null,
+      "success": {
+        "status": 204,
+        "headers": {},
+        "body": {
+          "absent": true
+        }
+      }
+    }
+  },
+  "when": {
+    "request": {
+      "method": "POST",
+      "path": "/mcp",
+      "headers": {
+        "authorization": "Bearer eyJhbGciOiJFUzI1NiIsImtpZCI6ImZpeHR1cmUtc2lnbmluZy1rZXktMSIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJmaXh0dXJlLXN1YmplY3QiLCJjbGllbnRfaWQiOiJmaXh0dXJlLWNsaWVudCIsInNjb3BlIjoibWNwOnJlYWQiLCJpc3MiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbSIsImF1ZCI6Imh0dHBzOi8vYXBpLmV4YW1wbGUuY29tL21jcCIsImlhdCI6LTYyMTY3MjE5MjAwLCJleHAiOi02MjE2NzIxOTE5OX0.Uzev2M97RuZBn6hn7BmcNPjHQhgAoaEY2CkNRKvtXfWusxqK1nGSfielt1MVEfcPbmayoIPIgUJjAHlVegFQmg",
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+        "mcp-protocol-version": "2025-06-18"
+      },
+      "body": {
+        "json": {
+          "jsonrpc": "2.0",
+          "id": 1,
+          "method": "initialize",
+          "params": {}
+        }
+      }
+    }
+  },
+  "then": {
+    "status": 204,
+    "headers": {
+      "www-authenticate": {
+        "absent": true
+      }
+    },
+    "outbound": []
+  }
+}

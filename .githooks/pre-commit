@@ -146,6 +146,11 @@ fixtures/08-resource-server-verifier/8.1-array-grant-portable.json,\
 fixtures/08-resource-server-verifier/8.1-object-grant-portable.json,\
 fixtures/08-resource-server-verifier/8.1-complete-machine-triad-host.json,\
 fixtures/08-resource-server-verifier/8.1-opaque-machine-prefix-client-host.json,\
+fixtures/07-crypto-and-token-contracts/7.2-clock-year-zero-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-clock-last-canonical-mint-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-clock-year-9999-before-expiry-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-clock-year-9999-at-expiry-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-clock-last-canonical-millisecond-portable.json,\
 fixtures/keys/signing-private.pem,\
 fixtures/keys/signing-public.pem,\
 fixtures/FREEZE-LOG.md"
