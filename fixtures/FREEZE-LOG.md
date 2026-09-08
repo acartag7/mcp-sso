@@ -223,3 +223,17 @@ The following 13 HTTP fixtures became frozen under §19.4: seven portable and si
 - `09-as-lite-bridge-contract/9.1-prm-route-portable` (portable)
 - `09-as-lite-bridge-contract/9.1-prm-route-root-identity-host` (host)
 - `09-as-lite-bridge-contract/9.1-public-jwks-portable` (portable)
+
+## 2026-09-08 access-token audience freeze
+
+The following nine portable HTTP fixtures became frozen under §19.4. Their executable content is unchanged from `8544a1ce6d80da054db3b3318a58ff95048154ac`. [CI run 34173778364](https://github.com/acartag7/mcp-sso/actions/runs/34173778364) passed the complete corpus on that main commit on 2026-09-08: 421 executions, zero failures and zero skips. Each portable HTTP fixture ran through Fastify, Express, and Hono. Receipts name mcp-sso 0.5.0 at that commit and run date. Only `status` and `receipt` changed in these fixtures. The previously frozen 186 fixtures remain unchanged. This freeze does not establish complete verifier coverage or a published corpus version.
+
+- `07-crypto-and-token-contracts/7.2-aud-boolean-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-duplicate-matches-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-leading-space-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-matching-first-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-matching-last-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-mixed-members-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-nested-array-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-singleton-array-portable` (portable)
+- `07-crypto-and-token-contracts/7.2-aud-trailing-space-portable` (portable)

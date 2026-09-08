@@ -80,4 +80,16 @@ This §19.7 receipt records direct access-verifier clock observations for §7.2.
 - Result: 92 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
 - §7.2 observations: invalid and noncanonical clock snapshots fail as `invalid_token`; one clock read owns verification; the exact expiry boundary remains closed; valid canonical clock boundary controls pass.
 
-The fixed canonical fixture clock cannot express an invalid clock value or a clock that changes between reads. These observations retain the suite form. This receipt does not prove verification-key import counts. Audience-shape coverage remains incomplete. Neither this receipt nor the token fixtures establishes complete first-slice coverage. Later consent, issuance, refresh, and bridge tests in the command do not extend this claim.
+The fixed canonical fixture clock cannot express an invalid clock value or a clock that changes between reads. These observations retain the suite form. This receipt does not prove verification-key import counts or cover the audience-shape class. Neither this receipt nor the token fixtures establishes complete first-slice coverage. Later consent, issuance, refresh, and bridge tests in the command do not extend this claim.
+
+## Audience suite evidence
+
+This §19.7 receipt records direct access-verifier and authorization observations for §7.2. These observations supplement the portable audience fixtures and do not increase portable fixture coverage.
+
+- Suite: repository access-token audience suite at `8544a1ce6d80da054db3b3318a58ff95048154ac`; implementation: mcp-sso 0.5.0 at that commit, reachable from `main`.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/access-token-audience.test.ts`.
+- Result: 44 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+- §7.2 observations: exact scalar audiences pass for interactive and machine credentials. Missing, wrongly typed, differently spelled, and array audiences fail as `invalid_token` 401. The direct verifier and `RequestAuthorizer` share the check. An absent, satisfied, or missing required scope does not change that failure, and authorization records failure events without subject, client, or scope claims.
+
+The suite observes returned credential kinds and exact audit events, including the reference-specific machine classifier. Those observations remain suite evidence. Verification-key import counts and incoming-scope policy remain separate gaps.
