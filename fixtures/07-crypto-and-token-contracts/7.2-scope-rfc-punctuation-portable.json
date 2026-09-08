@@ -7,7 +7,7 @@
     "clause": "7.2",
     "quote": "A nonempty claim contains RFC 6749 scope tokens separated by exactly one ASCII space, with no leading, trailing or repeated spaces."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "Incoming signed scopes follow the bounded string grammar without current-catalog revalidation. Other token claims use the valid control. Discovery permits the recorded root/path metadata delta.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "c73284fd19d66f363742d0681b34ad2b3cf290fa",
+    "date": "2026-09-08"
   }
 }
