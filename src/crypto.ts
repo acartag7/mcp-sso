@@ -134,7 +134,6 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
     throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
   }
 }
-
 export async function signAccessToken(claims: AccessTokenClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
   const scope = accessScopeString(claims.scopes);
   const subject = identitySubject(claims.subject); const now = nowSeconds(clock, config.accessTokenTtlSeconds);
