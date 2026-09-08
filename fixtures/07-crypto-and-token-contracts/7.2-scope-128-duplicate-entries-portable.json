@@ -7,7 +7,7 @@
     "clause": "7.2",
     "quote": "The limits are 128 entries, 256 UTF-8 bytes per token and 32,895 UTF-8 bytes for the complete claim."
   },
-  "status": "draft",
+  "status": "frozen",
   "notes": "Incoming signed scopes follow the bounded string grammar without current-catalog revalidation. Other token claims use the valid control. Discovery permits the recorded root/path metadata delta.",
   "given": {
     "config": {
@@ -92,5 +92,11 @@
       }
     },
     "outbound": []
+  },
+  "receipt": {
+    "implementation": "mcp-sso",
+    "version": "0.5.0",
+    "commit": "c73284fd19d66f363742d0681b34ad2b3cf290fa",
+    "date": "2026-09-08"
   }
 }
