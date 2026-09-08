@@ -18,6 +18,17 @@ export const MAX_SCOPE_ENTRIES = 128;
 export const MAX_SCOPE_TOKEN_BYTES = 256;
 export const MAX_SCOPE_CLAIM_BYTES = MAX_SCOPE_ENTRIES * MAX_SCOPE_TOKEN_BYTES + MAX_SCOPE_ENTRIES - 1;
 
+/** Internal access-token claim parser. Catalog membership belongs to issuance. */
+export function incomingAccessScopes(value: unknown): string[] {
+  if (typeof value !== "string" || Buffer.byteLength(value, "utf8") > MAX_SCOPE_CLAIM_BYTES) {
+    throw new Error("Invalid access-token scope claim");
+  }
+  const parsed = value === "" ? [] : value.split(" ", MAX_SCOPE_ENTRIES + 1);
+  const checked = snapshotBoundedScopeList(parsed);
+  if ("problem" in checked) throw new Error("Invalid access-token scope claim");
+  return checked.scopes;
+}
+
 /** Validate requested scopes against the configured catalog. Falls back to
  *  `defaults` when `scope` is absent/empty. De-dupes, preserves order. */
 export function normalizeScopes(

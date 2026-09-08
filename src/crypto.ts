@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify, type JWK, type JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts"; import { identitySubject } from "./identity-boundary.ts";
 import type { BridgeConfig } from "./config.ts";
-import { scopeString, type CredentialKind } from "./scopes.ts";
+import { incomingAccessScopes, scopeString, type CredentialKind } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
 import { numericDateIso } from "./numeric-date.ts"; import { consentStoreInstanceId } from "./consent-store-binding.ts";
@@ -213,7 +213,7 @@ function accessClaims(payload: JWTPayload): VerifiedAccessToken {
   return {
     subject,
     clientId,
-    scopes: payload.scope === "" ? [] : typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [],
+    scopes: incomingAccessScopes(payload.scope),
     credentialKind: credentialKindClaim(payload, subject, clientId),
   };
 }
