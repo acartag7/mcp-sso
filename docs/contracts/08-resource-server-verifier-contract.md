@@ -128,3 +128,14 @@ This §19.7 receipt records valid challenge-option cases for §8.2. It is direct
 The command includes the preceding 15 default/error cases and 25 explicit-override cases. Empty, subset, reordered, non-catalog and duplicate lists preserve their exact advertised values. The empty list omits the scope parameter while retaining metadata and requested error fields. Every override is checked with an omitted error and each documented error code, plus the normalized 401 response path. The normalized helper's separate 403 channel is unchanged; protected-resource 403 challenges remain covered by the HTTP fixtures.
 
 The HTTP fixture host supplies the catalog explicitly and cannot choose these direct helper arguments. Existing fixture expectations and quoted sentences remain unchanged. Empty configuration catalogs still fail at boot under §5.
+
+### Bounded scope-override receipt
+
+This §19.7 receipt adds the challenge scope-list rejection and snapshot cases for §8.2. These direct helper inputs cannot be selected by the HTTP fixture host, so they retain the suite form.
+
+- Suite: repository challenge-default suite at `adb4c7b5bf7bd7ef10ee2954e1dc4c128ac38a1d`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/challenge-defaults.test.ts`.
+- Result: 70 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The command includes the preceding 40 valid-option cases plus 30 scope-boundary cases. Wrong list types, malformed entries, unreadable lists and oversized values fail as `invalid_scope` 400 before resource-URL rendering on both the direct builder and normalized 401 path. Boundary controls retain 128 duplicates, a 256-byte token, a 32,895-byte joined list and permitted punctuation. A changing caller list proves one length read, one selected-entry read and no caller-iterator use. Valid overrides, the explicit empty list and catalog defaults retain their recorded behavior. This receipt concerns the scope option; it does not expand the error-code or description contract.
