@@ -84,3 +84,51 @@ for (const [name, scope, suffix] of overrides) {
     assert.equal(response.headers["www-authenticate"], `${metadata}${suffix}, error="invalid_token", error_description="Authorization failed"`);
   });
 }
+
+const invalidOverrides: Array<[string, unknown]> = [
+  ["null", null], ["boolean", false], ["number", 42], ["string", "mcp:read"], ["object", {}],
+  ["sparse", Array(1)], ["undefined entry", [undefined]], ["null entry", [null]],
+  ["boolean entry", [true]], ["number entry", [42]], ["nested array", [["mcp:read"]]],
+  ["empty token", [""]], ["space", ["mcp:read mcp:write"]], ["quote", ['mcp:"read']],
+  ["backslash", ["mcp:\\read"]], ["carriage return", ["mcp:read\r"]], ["newline", ["mcp:read\n"]],
+  ["tab", ["mcp:read\t"]], ["null byte", ["mcp:read\u0000"]], ["DEL", ["mcp:read\u007f"]],
+  ["non-ASCII", ["mcp:rèad"]], ["129 duplicates", Array(129).fill("mcp:read")],
+  ["257-byte token", ["a".repeat(257)]], ["32896-byte claim", [...Array(127).fill("a".repeat(256)), "a".repeat(257)]],
+  ["throwing length", new Proxy([], { get() { throw new Error("list unreadable"); } })],
+];
+const invalidScope = (error: unknown) => error instanceof OAuthError && error.code === "invalid_scope" && error.status === 400;
+for (const [name, scope] of invalidOverrides) {
+  test(`challenge rejects ${name} before resource URL rendering on both helper paths`, () => {
+    let resourceReads = 0;
+    const watchedConfig = new Proxy(config, { get(target, field, receiver) {
+      if (field === "resource") resourceReads++;
+      return Reflect.get(target, field, receiver);
+    } });
+    assert.throws(() => buildUnauthorizedChallenge(watchedConfig, { scope: scope as string[] }), invalidScope);
+    assert.throws(() => oauthErrorResponse(watchedConfig,
+      new OAuthError("invalid_token", "Authorization failed", 401), { scope: scope as string[] }), invalidScope);
+    assert.equal(resourceReads, 0);
+  });
+}
+for (const [name, scope] of [
+  ["128 duplicates", Array(128).fill("mcp:read")], ["256-byte token", ["a".repeat(256)]],
+  ["32895-byte list", Array(128).fill("a".repeat(256))],
+  ["RFC punctuation", ["!#$%&'()*+,-./:;<=>?@[]^_`{|}~"]],
+] as Array<[string, string[]]>) {
+  test(`challenge retains the valid ${name} boundary`, () => {
+    assert.equal(buildUnauthorizedChallenge(config, { scope }), `${metadata}, scope="${scope.join(" ")}"`);
+  });
+}
+test("challenge uses one bounded list snapshot without the caller iterator", () => {
+  let lengthReads = 0;
+  let entryReads = 0;
+  let iteratorReads = 0;
+  const scope = new Proxy(["custom:scope"], { get(target, field, receiver) {
+    if (field === "length") { lengthReads++; return lengthReads === 1 ? 1 : 129; }
+    if (field === "0") { entryReads++; return entryReads === 1 ? "custom:scope" : 'bad"scope'; }
+    if (field === Symbol.iterator) { iteratorReads++; throw new Error("caller iterator used"); }
+    return Reflect.get(target, field, receiver);
+  } });
+  assert.equal(buildUnauthorizedChallenge(config, { scope }), `${metadata}, scope="custom:scope"`);
+  assert.deepEqual({ lengthReads, entryReads, iteratorReads }, { lengthReads: 1, entryReads: 1, iteratorReads: 0 });
+});
