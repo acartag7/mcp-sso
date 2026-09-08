@@ -63,7 +63,7 @@ test("normalized OAuth errors without a challenge stay on their own error channe
   assert.deepEqual(response.headers, {});
 });
 
-const overrides: Array<[string, readonly string[], string]> = [
+const overrides: Array<[string, string[], string]> = [
   ["empty", [], ""],
   ["subset", ["mcp:read"], ', scope="mcp:read"'],
   ["reordered", ["mcp:read", "mcp:write"], ', scope="mcp:read mcp:write"'],
@@ -78,9 +78,9 @@ for (const [name, scope, suffix] of overrides) {
       assert.equal(buildUnauthorizedChallenge(config, { scope, error, errorDescription: "Authorization failed" }), expected);
     });
   }
-  test(`normalized insufficient-scope error retains the ${name} scope override`, () => {
-    const response = oauthErrorResponse(config, new OAuthError("insufficient_scope", "Authorization failed", 403), { scope });
-    assert.equal(response.status, 403);
-    assert.equal(response.headers["www-authenticate"], `${metadata}${suffix}, error="insufficient_scope", error_description="Authorization failed"`);
+  test(`normalized invalid-token error retains the ${name} scope override`, () => {
+    const response = oauthErrorResponse(config, new OAuthError("invalid_token", "Authorization failed", 401), { scope });
+    assert.equal(response.status, 401);
+    assert.equal(response.headers["www-authenticate"], `${metadata}${suffix}, error="invalid_token", error_description="Authorization failed"`);
   });
 }
