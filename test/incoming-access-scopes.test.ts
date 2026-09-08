@@ -73,12 +73,16 @@ for (const machine of [false, true]) {
       if (expected.length) {
         assert.deepEqual((await authorizer.authorize({ authorization: `Bearer ${token}`, requiredScope: expected[0] })).scopes, expected);
       }
-      assert.ok(events.every(event => event.status === "success"));
-      for (const event of events) assert.deepEqual(event.scopes, expected);
+      const successEvents = (expected.length ? [undefined, expected[0]] : [undefined]).map(reason => ({
+        occurredAt: new Date(now).toISOString(), event: "auth.request", status: "success",
+        subject: machine ? "mcc_test" : "test-subject", clientId: machine ? "mcc_test" : "test-client",
+        scopes: expected, reason,
+      }));
+      assert.deepEqual(events, successEvents);
       await assert.rejects(authorizer.authorize({ authorization: `Bearer ${token}`, requiredScope: "absent:scope" }), insufficientScope);
-      assert.deepEqual(events.at(-1), {
+      assert.deepEqual(events, [...successEvents, {
         occurredAt: new Date(now).toISOString(), event: "auth.request", status: "failure", reason: "insufficient_scope",
-      });
+      }]);
     });
   }
   for (const [name, scope] of bad) {
