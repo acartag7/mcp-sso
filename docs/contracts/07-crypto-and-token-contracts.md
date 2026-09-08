@@ -117,7 +117,7 @@ The tests count native WebCrypto imports while delegating to the original operat
 
 This §19.7 receipt records incoming signed-scope observations for §7.2, §8.1, §8.3 and §11. It supplements the portable HTTP fixtures and does not increase portable fixture coverage.
 
-- Suite: repository incoming access-scope suite at `87b703bcd313e00240f094a6e355e02c02b20041`; implementation: mcp-sso 0.5.0 at that commit.
+- Suite: repository incoming access-scope suite at `9e96ddac5fa3a0399de5abe2285661638890eff7`; implementation: mcp-sso 0.5.0 at that commit.
 - Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
 - Command: `node --test --test-reporter=spec test/incoming-access-scopes.test.ts`.
 - Result: 76 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
