@@ -92,4 +92,19 @@ This §19.7 receipt records direct access-verifier and authorization observation
 - Result: 44 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
 - §7.2 observations: exact scalar audiences pass for interactive and machine credentials. Missing, wrongly typed, differently spelled, and array audiences fail as `invalid_token` 401. The direct verifier and `RequestAuthorizer` share the check. An absent, satisfied, or missing required scope does not change that failure, and authorization records failure events without subject, client, or scope claims.
 
-The suite observes returned credential kinds and exact audit events, including the reference-specific machine classifier. Those observations remain suite evidence. Verification-key import counts and incoming-scope policy remain separate gaps.
+The suite observes returned credential kinds and exact audit events, including the reference-specific machine classifier. Those observations remain suite evidence. Verification-key import counts and incoming-scope policy are outside this receipt.
+
+## Access-key reuse suite evidence
+
+This §19.7 receipt records key-import reuse for §7.2. It is suite evidence, not portable fixture coverage.
+
+- Suite: repository access-key reuse suite at `12d69709dc1bd87a088faf93c72d08e8b5818c52`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/access-key-reuse.test.ts`.
+- Result: 2 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The verification test calls `RequestAuthorizer` with a stable key reference through one validated configuration. Six overlapping requests, a later request, and a second authorizer sharing that configuration use one verification-key import. A different key adds one import, verifies its own token, and rejects the first key's token as `invalid_token` 401. Returning to the first key adds no import.
+
+The signing sibling test observes one private-key import for six overlapping signatures, one additional import for a different key, and reuse when returning to the first key. It verifies the signed tokens against separately imported public keys, including rejection with the other public key. These are access-token signing-cache observations, not evidence for later grant flows.
+
+The tests count native WebCrypto imports while delegating to the original operation. The production caches and cryptographic results are unmocked. HTTP and boot fixtures cannot observe process-local key references or import counts, so these results retain the suite form.
