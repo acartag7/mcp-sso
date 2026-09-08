@@ -32,8 +32,10 @@ Returns the exact `WWW-Authenticate` value for a 401. The source's bug was a bar
 Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource", scope="mcp:read mcp:write", error="invalid_token", error_description="Bearer token is invalid"
 ```
 - `resource_metadata` = the **PRM URL at the resource origin** (root form. The path-inserted form is also served, §9). Quoted per RFC 7235.
-- `scope` = space-joined `scopeCatalog` (tells the client what it may request).
+- `scope` = space-joined `scopeCatalog` (tells the client what it may request). This is the default when `opts.scope` is omitted or `undefined`. An explicit `opts.scope` list overrides the catalog, preserving its order and duplicates without catalog filtering. An explicit empty list `[]` omits the `scope` parameter.
 - `error`/`error_description` included when the rejection reason is known (`invalid_token`, `invalid_request`, `insufficient_scope`).
+
+For example, `buildUnauthorizedChallenge(config, { scope: ["mcp:read"] })` advertises `scope="mcp:read"` even when the catalog is larger. Passing `{ scope: [] }` retains `resource_metadata` and any requested error fields but emits no `scope` parameter.
 
 ## 8.3 `requireScope(auth, required, hierarchy?) → void`  (403 step-up)
 Throws `OAuthError("insufficient_scope", …, 403)` if the verified subject lacks the scope. With no explicit hierarchy it uses exact membership. When passed the validated `config.scopeHierarchy`, a granted scope also satisfies every scope reachable through one or more `granted → implies` edges. The adapter emits a 403 whose `WWW-Authenticate` carries the same `resource_metadata` + `scope` + `error="insufficient_scope"` so the client can step up and re-authorize for the missing scope.
@@ -110,4 +112,4 @@ This §19.7 receipt records direct helper options and the normalized-error compo
 
 Omitted options, empty options, and an undefined scope option advertise the catalog in its configured order. An explicit catalog retains that result. The challenge points at the resource origin even when the issuer differs and the resource has a nested path. The suite checks each documented error code with and without a description, a description without an error, an empty description, and quote/backslash escaping. `oauthErrorResponse` with an empty challenge uses the catalog; its no-challenge branch retains its own error channel.
 
-The HTTP fixture host supplies explicit catalog and error options, so it cannot make these direct calls. Explicit scope lists that differ from the catalog and an explicit empty scope list still require a contract ruling; this receipt does not establish their expected behavior. Empty catalogs are already rejected at boot under §5.
+The HTTP fixture host supplies explicit catalog and error options, so it cannot make these direct calls. Explicit scope lists that differ from the catalog and an explicit empty scope list are outside this receipt. Empty catalogs are already rejected at boot under §5.
