@@ -70,6 +70,8 @@ The why behind [contracts §5 to §14](./contracts.md). Each control is a guaran
 
 - **Incoming signed scopes** ([§7.2](./contracts/07-crypto-and-token-contracts.md#72-access-token-es256-audience-bound-fail-closed), [§11](./contracts/11-scope-contract.md)): after cryptographic verification, access-token scope parsing requires a string and rejects malformed separators, tokens and oversized lists as `invalid_token` 401 before scope authorization or success audit. The limits are 128 entries, 256 bytes per RFC scope token and 32,895 bytes per claim, with duplicates counted and retained. Catalog removal is not access-token revocation: otherwise valid signed scopes remain usable until expiry. Issuance and refresh still apply their catalog checks. The public access-token signer also checks the bounded scope-list snapshot before its clock and key operations, so direct callers cannot receive an access token with a malformed scope list. This claim-validation bound does not replace the host's HTTP-header or whole-token input limits.
 
+- **Challenge scope serialization** ([§8.2](./contracts/08-resource-server-verifier-contract.md#82-buildunauthorizedchallengeconfig-opts--string--)): the Bearer challenge uses one bounded scope-list snapshot. Malformed entries, including quotes, backslashes and controls, fail before header rendering. Valid explicit lists retain their order and duplicates, and an empty override omits the scope parameter. This is scope-list validation, not catalog authorization.
+
 ## Threats (attacker-driven)
 
 | # | Threat | STRIDE | Primary controls | Residual risk |

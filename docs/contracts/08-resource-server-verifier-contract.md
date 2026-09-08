@@ -32,8 +32,12 @@ Returns the exact `WWW-Authenticate` value for a 401. The source's bug was a bar
 Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource", scope="mcp:read mcp:write", error="invalid_token", error_description="Bearer token is invalid"
 ```
 - `resource_metadata` = the **PRM URL at the resource origin** (root form. The path-inserted form is also served, §9). Quoted per RFC 7235.
-- `scope` = space-joined `scopeCatalog` (tells the client what it may request).
+- `scope` = space-joined `scopeCatalog` (tells the client what it may request). This is the default when `opts.scope` is omitted or `undefined`. An explicit `opts.scope` list overrides the catalog, preserving its order and duplicates without catalog filtering. An explicit empty list `[]` omits the `scope` parameter.
 - `error`/`error_description` included when the rejection reason is known (`invalid_token`, `invalid_request`, `insufficient_scope`).
+
+Before rendering the challenge, the helper snapshots the selected scope list and applies the §11 RFC scope-token grammar and bounds: 128 entries, 256 UTF-8 bytes per token and 32,895 bytes for the joined list. Duplicates count toward the bounds. A non-array, unreadable, malformed or oversized list throws `OAuthError("invalid_scope", ..., 400)` and returns no challenge value. An explicit `null` is invalid; only an omitted or `undefined` scope selects the catalog. Validation and rendering use the same copied entries without invoking the caller's iterator. This validation does not filter against the catalog or change the valid override behavior above.
+
+For example, `buildUnauthorizedChallenge(config, { scope: ["mcp:read"] })` advertises `scope="mcp:read"` even when the catalog is larger. Passing `{ scope: [] }` retains `resource_metadata` and any requested error fields but emits no `scope` parameter.
 
 ## 8.3 `requireScope(auth, required, hierarchy?) → void`  (403 step-up)
 Throws `OAuthError("insufficient_scope", …, 403)` if the verified subject lacks the scope. With no explicit hierarchy it uses exact membership. When passed the validated `config.scopeHierarchy`, a granted scope also satisfies every scope reachable through one or more `granted → implies` edges. The adapter emits a 403 whose `WWW-Authenticate` carries the same `resource_metadata` + `scope` + `error="insufficient_scope"` so the client can step up and re-authorize for the missing scope.
@@ -110,4 +114,28 @@ This §19.7 receipt records direct helper options and the normalized-error compo
 
 Omitted options, empty options, and an undefined scope option advertise the catalog in its configured order. An explicit catalog retains that result. The challenge points at the resource origin even when the issuer differs and the resource has a nested path. The suite checks each documented error code with and without a description, a description without an error, an empty description, and quote/backslash escaping. `oauthErrorResponse` with an empty challenge uses the catalog; its no-challenge branch retains its own error channel.
 
-The HTTP fixture host supplies explicit catalog and error options, so it cannot make these direct calls. Explicit scope lists that differ from the catalog and an explicit empty scope list still require a contract ruling; this receipt does not establish their expected behavior. Empty catalogs are already rejected at boot under §5.
+The HTTP fixture host supplies explicit catalog and error options, so it cannot make these direct calls. Explicit scope lists that differ from the catalog and an explicit empty scope list are outside this receipt. Empty catalogs are already rejected at boot under §5.
+
+### Explicit scope-override receipt
+
+This §19.7 receipt records valid challenge-option cases for §8.2. It is direct suite evidence, not portable fixture coverage.
+
+- Suite: repository challenge-default suite at `8319d13d852523dca5d4a26ca6cb4f0ee7b1f3ce`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/challenge-defaults.test.ts`.
+- Result: 40 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The command includes the preceding 15 default/error cases and 25 explicit-override cases. Empty, subset, reordered, non-catalog and duplicate lists preserve their exact advertised values. The empty list omits the scope parameter while retaining metadata and requested error fields. Every override is checked with an omitted error and each documented error code, plus the normalized 401 response path. The normalized helper's separate 403 channel is unchanged; protected-resource 403 challenges remain covered by the HTTP fixtures.
+
+The HTTP fixture host supplies the catalog explicitly and cannot choose these direct helper arguments. Existing fixture expectations and quoted sentences remain unchanged. Empty configuration catalogs still fail at boot under §5.
+
+### Bounded scope-override receipt
+
+This §19.7 receipt adds the challenge scope-list rejection and snapshot cases for §8.2. These direct helper inputs cannot be selected by the HTTP fixture host, so they retain the suite form.
+
+- Suite: repository challenge-default suite at `adb4c7b5bf7bd7ef10ee2954e1dc4c128ac38a1d`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/challenge-defaults.test.ts`.
+- Result: 70 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The command includes the preceding 40 valid-option cases plus 30 scope-boundary cases. Wrong list types, malformed entries, unreadable lists and oversized values fail as `invalid_scope` 400 before resource-URL rendering on both the direct builder and normalized 401 path. Boundary controls retain 128 duplicates, a 256-byte token, a 32,895-byte joined list and permitted punctuation. A changing caller list proves one length read, one selected-entry read and no caller-iterator use. Valid overrides, the explicit empty list and catalog defaults retain their recorded behavior. This receipt concerns the scope option; it does not expand the error-code or description contract.

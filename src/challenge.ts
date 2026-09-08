@@ -4,9 +4,11 @@
 
 import type { BridgeConfig } from "./config.ts";
 import { originOf } from "./config.ts";
+import { OAuthError } from "./errors.ts";
+import { snapshotBoundedScopeList } from "./scopes.ts";
 
 export interface ChallengeOptions {
-  /** Catalog the client may request (space-joined into `scope`). */
+  /** Explicit advertised scopes. Omitted uses the catalog; [] omits `scope`. */
   scope?: readonly string[];
   /** OAuth error code, e.g. "invalid_token" or "insufficient_scope". */
   error?: string;
@@ -21,9 +23,12 @@ export function protectedResourceMetadataUrl(config: BridgeConfig): string {
 
 /** Build the exact `WWW-Authenticate` value for a 401. */
 export function buildUnauthorizedChallenge(config: BridgeConfig, opts: ChallengeOptions = {}): string {
+  const selected = opts.scope;
+  const checked = snapshotBoundedScopeList(selected === undefined ? config.scopeCatalog : selected);
+  if ("problem" in checked) throw new OAuthError("invalid_scope", "Challenge scopes are malformed");
+  const scope = checked.scopes;
   const params: string[] = [];
   params.push(`Bearer resource_metadata="${protectedResourceMetadataUrl(config)}"`);
-  const scope = opts.scope ?? config.scopeCatalog;
   if (scope.length > 0) params.push(`scope="${scope.join(" ")}"`);
   if (opts.error) {
     params.push(`error="${opts.error}"`);
