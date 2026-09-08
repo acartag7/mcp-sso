@@ -23,7 +23,8 @@ export function protectedResourceMetadataUrl(config: BridgeConfig): string {
 export function buildUnauthorizedChallenge(config: BridgeConfig, opts: ChallengeOptions = {}): string {
   const params: string[] = [];
   params.push(`Bearer resource_metadata="${protectedResourceMetadataUrl(config)}"`);
-  if (opts.scope && opts.scope.length > 0) params.push(`scope="${opts.scope.join(" ")}"`);
+  const scope = opts.scope ?? config.scopeCatalog;
+  if (scope.length > 0) params.push(`scope="${scope.join(" ")}"`);
   if (opts.error) {
     params.push(`error="${opts.error}"`);
     if (opts.errorDescription) params.push(`error_description="${escapeQuoted(opts.errorDescription)}"`);
