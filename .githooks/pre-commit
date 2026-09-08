@@ -250,6 +250,15 @@ fixtures/09-as-lite-bridge-contract/9.1-prm-nested-route-path-identity-host.json
 fixtures/09-as-lite-bridge-contract/9.1-as-metadata-portable.json,\
 fixtures/09-as-lite-bridge-contract/9.1-as-metadata-single-scope-portable.json,\
 fixtures/09-as-lite-bridge-contract/9.1-public-jwks-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-singleton-array-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-matching-first-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-matching-last-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-duplicate-matches-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-mixed-members-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-nested-array-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-boolean-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-leading-space-portable.json,\
+fixtures/07-crypto-and-token-contracts/7.2-aud-trailing-space-portable.json,\
 fixtures/keys/signing-private.pem,\
 fixtures/keys/signing-public.pem,\
 fixtures/FREEZE-LOG.md"

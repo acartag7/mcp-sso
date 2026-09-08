@@ -158,12 +158,12 @@ export async function verifyAccessToken(token: string, config: BridgeConfig, clo
       audience: config.resource, requiredClaims: ["exp"],
       currentDate: new Date(nowMs),
     });
+    if (payload.aud !== config.resource) throw new Error("Access token audience must equal resource");
     return accessClaims(payload);
   } catch {
     throw new OAuthError("invalid_token", "Bearer token is invalid", 401);
   }
 }
-
 export function publicJwk(config: BridgeConfig): JWK {
   const jwk = config.signingPrivateJwk;
   return { kty: jwk.kty, crv: jwk.crv, x: jwk.x, y: jwk.y, alg: "ES256", use: "sig", kid: keyId(config) };
