@@ -95,4 +95,17 @@ This §19.7 receipt records the direct challenge builder with an explicit catalo
 - Command: `node --test --test-reporter=spec test/oauth.test.ts`.
 - Result: 50 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
 
-The named challenge test checks `resource_metadata`, the supplied catalog, `invalid_token`, and the supplied description on the direct helper result. The HTTP host supplies catalog, error, and description on every authorization rejection. It cannot select omitted helper options, an unknown rejection reason, or the direct `invalid_request` option. Those branches remain without a passing suite receipt. Later bridge tests in this command do not extend first-slice coverage. The host also fixes the protected handler at `/mcp`; it does not prove other protected-route layouts or a prefix-mounted authorization server.
+The named challenge test checks `resource_metadata`, the supplied catalog, `invalid_token`, and the supplied description on the direct helper result. The HTTP host supplies catalog, error, and description on every authorization rejection. It cannot select omitted helper options, an unknown rejection reason, or the direct `invalid_request` option. Those branches are outside this receipt. Later bridge tests in this command do not extend first-slice coverage. The host also fixes the protected handler at `/mcp`; it does not prove other protected-route layouts or a prefix-mounted authorization server.
+
+### Default challenge-options receipt
+
+This §19.7 receipt records direct helper options and the normalized-error composition for §8.2. It is suite evidence, not portable fixture coverage.
+
+- Suite: repository challenge-default suite at `33066bcd5f6716bb2a55ce28583e76aafc5bb3a7`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/challenge-defaults.test.ts`.
+- Result: 15 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+Omitted options, empty options, and an undefined scope option advertise the catalog in its configured order. An explicit catalog retains that result. The challenge points at the resource origin even when the issuer differs and the resource has a nested path. The suite checks each documented error code with and without a description, a description without an error, an empty description, and quote/backslash escaping. `oauthErrorResponse` with an empty challenge uses the catalog; its no-challenge branch retains its own error channel.
+
+The HTTP fixture host supplies explicit catalog and error options, so it cannot make these direct calls. Explicit scope lists that differ from the catalog and an explicit empty scope list still require a contract ruling; this receipt does not establish their expected behavior. Empty catalogs are already rejected at boot under §5.
