@@ -62,3 +62,25 @@ test("normalized OAuth errors without a challenge stay on their own error channe
   const response = oauthErrorResponse(config, new OAuthError("invalid_token", "Bearer token is invalid", 401));
   assert.deepEqual(response.headers, {});
 });
+
+const overrides: Array<[string, readonly string[], string]> = [
+  ["empty", [], ""],
+  ["subset", ["mcp:read"], ', scope="mcp:read"'],
+  ["reordered", ["mcp:read", "mcp:write"], ', scope="mcp:read mcp:write"'],
+  ["outside catalog", ["custom:scope"], ', scope="custom:scope"'],
+  ["duplicates", ["mcp:read", "mcp:read"], ', scope="mcp:read mcp:read"'],
+];
+const metadata = 'Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource"';
+for (const [name, scope, suffix] of overrides) {
+  for (const error of [undefined, "invalid_token", "invalid_request", "insufficient_scope"]) {
+    test(`${name} scope override is retained with ${error ?? "no error"}`, () => {
+      const expected = error ? `${metadata}${suffix}, error="${error}", error_description="Authorization failed"` : `${metadata}${suffix}`;
+      assert.equal(buildUnauthorizedChallenge(config, { scope, error, errorDescription: "Authorization failed" }), expected);
+    });
+  }
+  test(`normalized insufficient-scope error retains the ${name} scope override`, () => {
+    const response = oauthErrorResponse(config, new OAuthError("insufficient_scope", "Authorization failed", 403), { scope });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers["www-authenticate"], `${metadata}${suffix}, error="insufficient_scope", error_description="Authorization failed"`);
+  });
+}

@@ -6,7 +6,7 @@ import type { BridgeConfig } from "./config.ts";
 import { originOf } from "./config.ts";
 
 export interface ChallengeOptions {
-  /** Catalog the client may request (space-joined into `scope`). */
+  /** Explicit advertised scopes. Omitted uses the catalog; [] omits `scope`. */
   scope?: readonly string[];
   /** OAuth error code, e.g. "invalid_token" or "insufficient_scope". */
   error?: string;
