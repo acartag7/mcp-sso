@@ -35,6 +35,8 @@ Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-re
 - `scope` = space-joined `scopeCatalog` (tells the client what it may request). This is the default when `opts.scope` is omitted or `undefined`. An explicit `opts.scope` list overrides the catalog, preserving its order and duplicates without catalog filtering. An explicit empty list `[]` omits the `scope` parameter.
 - `error`/`error_description` included when the rejection reason is known (`invalid_token`, `invalid_request`, `insufficient_scope`).
 
+Before rendering the challenge, the helper snapshots the selected scope list and applies the §11 RFC scope-token grammar and bounds: 128 entries, 256 UTF-8 bytes per token and 32,895 bytes for the joined list. Duplicates count toward the bounds. A non-array, unreadable, malformed or oversized list throws `OAuthError("invalid_scope", ..., 400)` and returns no challenge value. An explicit `null` is invalid; only an omitted or `undefined` scope selects the catalog. Validation and rendering use the same copied entries without invoking the caller's iterator. This validation does not filter against the catalog or change the valid override behavior above.
+
 For example, `buildUnauthorizedChallenge(config, { scope: ["mcp:read"] })` advertises `scope="mcp:read"` even when the catalog is larger. Passing `{ scope: [] }` retains `resource_metadata` and any requested error fields but emits no `scope` parameter.
 
 ## 8.3 `requireScope(auth, required, hierarchy?) → void`  (403 step-up)
@@ -116,7 +118,7 @@ The HTTP fixture host supplies explicit catalog and error options, so it cannot 
 
 ### Explicit scope-override receipt
 
-This §19.7 receipt completes the documented challenge-option cases for §8.2. It is direct suite evidence, not portable fixture coverage.
+This §19.7 receipt records valid challenge-option cases for §8.2. It is direct suite evidence, not portable fixture coverage.
 
 - Suite: repository challenge-default suite at `8319d13d852523dca5d4a26ca6cb4f0ee7b1f3ce`; implementation: mcp-sso 0.5.0 at that commit.
 - Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
