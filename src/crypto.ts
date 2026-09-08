@@ -3,7 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { SignJWT, importJWK, jwtVerify, type JWK, type JWTPayload } from "jose";
 import { finiteClockSnapshot, type ClockPort } from "./ports/clock.ts"; import { identitySubject } from "./identity-boundary.ts";
 import type { BridgeConfig } from "./config.ts";
-import { scopeString, type CredentialKind } from "./scopes.ts";
+import { accessScopeString, incomingAccessScopes, scopeString, type CredentialKind } from "./scopes.ts";
 import { OAuthError } from "./errors.ts";
 import { consentSecret, signKey, verifyKey } from "./crypto-keys.ts";
 import { numericDateIso } from "./numeric-date.ts"; import { consentStoreInstanceId } from "./consent-store-binding.ts";
@@ -134,11 +134,11 @@ export async function verifyConsentToken(token: string, config: BridgeConfig, cl
     throw new OAuthError("invalid_consent", "Consent token is invalid or expired");
   }
 }
-
 export async function signAccessToken(claims: AccessTokenClaims, config: BridgeConfig, clock: ClockPort): Promise<string> {
+  const scope = accessScopeString(claims.scopes);
   const subject = identitySubject(claims.subject); const now = nowSeconds(clock, config.accessTokenTtlSeconds);
   const key = await signKey(config);
-  return await new SignJWT({ client_id: claims.clientId, scope: scopeString(claims.scopes), ...(claims.machine ? { gty: "client_credentials" } : {}) })
+  return await new SignJWT({ client_id: claims.clientId, scope, ...(claims.machine ? { gty: "client_credentials" } : {}) })
     .setProtectedHeader({ alg: "ES256", kid: keyId(config), typ: "JWT" })
     .setIssuer(config.issuer)
     .setSubject(subject)
@@ -213,7 +213,7 @@ function accessClaims(payload: JWTPayload): VerifiedAccessToken {
   return {
     subject,
     clientId,
-    scopes: payload.scope === "" ? [] : typeof payload.scope === "string" ? payload.scope.split(/\s+/) : [],
+    scopes: incomingAccessScopes(payload.scope),
     credentialKind: credentialKindClaim(payload, subject, clientId),
   };
 }

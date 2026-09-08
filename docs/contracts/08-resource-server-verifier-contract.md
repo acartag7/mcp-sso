@@ -7,6 +7,8 @@ The RS half. Framework-free. Testable without any HTTP server.
 ## 8.1 `verifyAccessToken(token, config, clock?) → VerifiedAccessToken`
 As §7.2. Throws `OAuthError("invalid_token", …, 401)` on any failure.
 
+The §7.2 incoming-scope grammar and bounds apply before `requireScope`. Verification preserves the signed scope list, including duplicate entries, without current-catalog revalidation. A malformed claim is `invalid_token` 401 even when no required scope is configured; a valid claim lacking the required scope follows §8.3's 403 step-up.
+
 The verified result carries the credential kind established from the already verified claims:
 
 ```ts

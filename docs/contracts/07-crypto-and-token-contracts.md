@@ -43,6 +43,12 @@ interface AccessTokenClaims { subject: string; clientId: string; scopes: string[
 ```
 JWT: header `{alg:"ES256", kid, typ:"JWT"}`, payload `client_id`, `scope`, `sub`, `iss`=issuer, `aud`=**resource** (RFC 8707 audience binding), `iat`, `exp`. Verified with `algorithms: ["ES256"]`, pinned iss + **aud=resource** (fail-closed: a token whose `aud` ≠ resource is `invalid_token`, never accepted), clock from `ClockPort`. `signAccessToken` and `verifyAccessToken` both apply the shared §6.5 subject predicate. A pre-upgrade signed token whose subject is now outside the domain is `invalid_token`; it cannot reach resource authorization or audit. Per §6.1, `verifyAccessToken` takes one canonical snapshot before `jwtVerify`. Snapshot failure remains the existing `invalid_token` 401. All three access-token issuance owners use the §6.1 token-operation snapshot. `signAccessToken` therefore receives a fixed, already-validated clock: `iat`, `exp`, related refresh expiry, store timestamps, and audit timestamps within one grant operation derive from the same millisecond value.
 
+Incoming access-token verification requires `scope` to be a primitive string. The empty string represents no scopes. A nonempty claim contains RFC 6749 scope tokens separated by exactly one ASCII space, with no leading, trailing or repeated spaces. The limits are 128 entries, 256 UTF-8 bytes per token and 32,895 UTF-8 bytes for the complete claim. Duplicates count toward the entry limit, and verification preserves their order and multiplicity. A missing, non-string, malformed or oversized `scope` claim rejects the whole access token as `invalid_token` 401 before required-scope checking. This rule applies to interactive and machine credentials after signature, algorithm, issuer, audience and time verification.
+
+Verification does not revalidate signed scopes against the current catalog: an otherwise valid token retains its well-formed scope list until expiry. Issuance and refresh continue to check their scope lists against the current catalog under §11. A valid token that lacks the required scope still receives `insufficient_scope` 403 under §8.3. For example, a signed `scope: "retired:read mcp:read retired:read"` retains all three entries after `retired:read` leaves the catalog; `scope: "mcp:read  retired:read"` instead fails as `invalid_token` because the separator repeats.
+
+The public `signAccessToken` helper snapshots its scope list and checks the §11 list grammar and bounds before reading the clock or importing the signing key. An invalid list is `invalid_scope` 400 and produces no token. The helper serializes that checked snapshot with the existing sorted scope format. It does not select or revalidate catalog membership; the grant use-cases retain that policy. This rule applies to interactive and machine access-token signing.
+
 **, cached verification key:** the public JWK is imported to an ES256 key **once** (memoized on the config) rather than per request. `verifyAccessToken` reuses the cached `CryptoKey`.
 
 ## 7.3 Authorization code (hashed, single-use)
@@ -108,3 +114,27 @@ The verification test calls `RequestAuthorizer` with a stable key reference thro
 The signing sibling test observes one private-key import for six overlapping signatures, one additional import for a different key, and reuse when returning to the first key. It verifies the signed tokens against separately imported public keys, including rejection with the other public key. These are access-token signing-cache observations, not evidence for later grant flows.
 
 The tests count native WebCrypto imports while delegating to the original operation. The production caches and cryptographic results are unmocked. HTTP and boot fixtures cannot observe process-local key references or import counts, so these results retain the suite form.
+
+## Incoming-scope suite evidence
+
+This §19.7 receipt records incoming signed-scope observations for §7.2, §8.1, §8.3 and §11. It supplements the portable HTTP fixtures and does not increase portable fixture coverage.
+
+- Suite: repository incoming access-scope suite at `9e96ddac5fa3a0399de5abe2285661638890eff7`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/incoming-access-scopes.test.ts`.
+- Result: 76 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+For interactive and machine credentials, the suite checks the direct verifier's returned scope list and authorization's exact audit events. Empty scopes, removed catalog entries, preserved order and duplicates, and the permitted grammar and bounds pass. Missing, wrongly typed, malformed and oversized claims fail as `invalid_token` 401 with no success audit, including when a required scope would otherwise pass. Well-formed scopes outside the catalog remain usable before expiry and fail at expiry. A valid token missing the required scope receives `insufficient_scope` 403.
+
+The 32,895-byte claim and its 32,896-byte rejection require direct suite evidence. Their signed Authorization headers exceed the fixture schema's 8,192-character per-value limit. The portable fixtures separately exercise the 128-entry and 256-byte token boundaries with smaller claims. Returned lists, machine credential classification, exact audit events and these full-claim boundaries retain the suite form. Issuance and refresh policy remain outside this receipt.
+
+## Public access-signing suite evidence
+
+This §19.7 receipt adds the public access-token signing sibling to the incoming-scope evidence for §7.2 and §11. Direct helper calls and their clock, key and list-read observations retain the suite form. They do not increase portable fixture coverage.
+
+- Suite: repository incoming access-scope suite at `e828022a6eacad91e6e7437f746e89c9e4cdf528`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/incoming-access-scopes.test.ts`.
+- Result: 138 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The command includes the preceding 76 incoming-verifier cases and 62 public-signing cases. Both credential kinds round-trip empty, ordinary, removed-catalog, duplicate, punctuation and boundary scope lists through the real signer and verifier. Invalid list shapes, elements and bounds produce `invalid_scope` 400 before clock or key reads. A changing caller list proves that signing uses one length read and one selected-entry read without invoking its iterator. The existing sorted serialization and grant use-cases' catalog policy remain unchanged. These are access-token observations; consent-token signing is outside this receipt.
