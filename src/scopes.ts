@@ -29,6 +29,13 @@ export function incomingAccessScopes(value: unknown): string[] {
   return checked.scopes;
 }
 
+/** Internal access-token serialization from one checked list snapshot. */
+export function accessScopeString(value: unknown): string {
+  const checked = snapshotBoundedScopeList(value);
+  if ("problem" in checked) throw invalidScope();
+  return scopeString(checked.scopes);
+}
+
 /** Validate requested scopes against the configured catalog. Falls back to
  *  `defaults` when `scope` is absent/empty. De-dupes, preserves order. */
 export function normalizeScopes(

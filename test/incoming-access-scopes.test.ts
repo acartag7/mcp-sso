@@ -3,7 +3,7 @@ import { generateKeyPairSync, randomBytes } from "node:crypto";
 import { test } from "node:test";
 import { importJWK, SignJWT } from "jose";
 import { createBridgeConfig } from "../src/config.ts";
-import { verifyAccessToken } from "../src/crypto.ts";
+import { signAccessToken, verifyAccessToken } from "../src/crypto.ts";
 import { OAuthError } from "../src/errors.ts";
 import type { AuthAuditEvent } from "../src/ports/audit.ts";
 import { RequestAuthorizer } from "../src/verifier.ts";
@@ -104,5 +104,55 @@ for (const machine of [false, true]) {
     const token = await signed("retired:read", machine);
     assert.deepEqual((await verifyAccessToken(token, config, { nowMs: () => now + 299_999 })).scopes, ["retired:read"]);
     await assert.rejects(verifyAccessToken(token, config, { nowMs: () => now + 300_000 }), invalidToken);
+  });
+}
+
+const invalidScopeList: Array<[string, unknown]> = [
+  ["missing", undefined], ["null", null], ["boolean", false], ["number", 42],
+  ["string", "mcp:read"], ["object", {}], ["undefined entry", [undefined]],
+  ["null entry", [null]], ["boolean entry", [true]], ["number entry", [42]],
+  ["array entry", [["mcp:read"]]], ["sparse list", Array(1)], ["empty token", [""]],
+  ["space token", ["mcp:read retired:read"]], ["tab token", ["mcp:read\t"]],
+  ["newline token", ["mcp:read\n"]], ["quote token", ['mcp:"read']],
+  ["backslash token", ["mcp:\\read"]], ["non-ASCII token", ["mcp:rèad"]],
+  ["129 duplicate entries", Array(129).fill("mcp:read")], ["257-byte token", ["a".repeat(257)]],
+  ["32896-byte claim", [...maxList.slice(0, -1), `${maxToken}a`]],
+];
+for (const machine of [false, true]) {
+  const kind = machine ? "machine" : "interactive";
+  const claims = { subject: machine ? "mcc_test" : "test-subject", clientId: machine ? "mcc_test" : "test-client", machine };
+  for (const [name, , scopes] of good) {
+    test(`${kind} public signer round-trips ${name} with the existing sorted format`, async () => {
+      const token = await signAccessToken({ ...claims, scopes }, config, clock);
+      assert.deepEqual((await verifyAccessToken(token, config, clock)).scopes, [...scopes].sort());
+    });
+  }
+  for (const [name, scopes] of invalidScopeList) {
+    test(`${kind} public signer rejects ${name} before clock or key operations`, async () => {
+      let clockReads = 0;
+      let keyReads = 0;
+      const watchedConfig = new Proxy(config, { get(target, field, receiver) {
+        if (field === "signingPrivateJwk") keyReads++;
+        return Reflect.get(target, field, receiver);
+      } });
+      await assert.rejects(signAccessToken({ ...claims, scopes: scopes as string[] }, watchedConfig,
+        { nowMs() { clockReads++; return now; } }),
+      error => error instanceof OAuthError && error.code === "invalid_scope" && error.status === 400);
+      assert.deepEqual({ clockReads, keyReads }, { clockReads: 0, keyReads: 0 });
+    });
+  }
+  test(`${kind} public signer serializes one bounded snapshot without using the caller iterator`, async () => {
+    let lengthReads = 0;
+    let entryReads = 0;
+    let iteratorReads = 0;
+    const scopes = new Proxy(["retired:read"], { get(target, field, receiver) {
+      if (field === "length") { lengthReads++; return lengthReads === 1 ? 1 : 129; }
+      if (field === "0") { entryReads++; return entryReads === 1 ? "retired:read" : "mcp:read invalid"; }
+      if (field === Symbol.iterator) { iteratorReads++; throw new Error("caller iterator used"); }
+      return Reflect.get(target, field, receiver);
+    } });
+    const token = await signAccessToken({ ...claims, scopes }, config, clock);
+    assert.deepEqual((await verifyAccessToken(token, config, clock)).scopes, ["retired:read"]);
+    assert.deepEqual({ lengthReads, entryReads, iteratorReads }, { lengthReads: 1, entryReads: 1, iteratorReads: 0 });
   });
 }
