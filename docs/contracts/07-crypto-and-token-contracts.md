@@ -112,3 +112,16 @@ The verification test calls `RequestAuthorizer` with a stable key reference thro
 The signing sibling test observes one private-key import for six overlapping signatures, one additional import for a different key, and reuse when returning to the first key. It verifies the signed tokens against separately imported public keys, including rejection with the other public key. These are access-token signing-cache observations, not evidence for later grant flows.
 
 The tests count native WebCrypto imports while delegating to the original operation. The production caches and cryptographic results are unmocked. HTTP and boot fixtures cannot observe process-local key references or import counts, so these results retain the suite form.
+
+## Incoming-scope suite evidence
+
+This §19.7 receipt records incoming signed-scope observations for §7.2, §8.1, §8.3 and §11. It supplements the portable HTTP fixtures and does not increase portable fixture coverage.
+
+- Suite: repository incoming access-scope suite at `87b703bcd313e00240f094a6e355e02c02b20041`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/incoming-access-scopes.test.ts`.
+- Result: 76 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+For interactive and machine credentials, the suite checks the direct verifier's returned scope list and authorization's exact audit events. Empty scopes, removed catalog entries, preserved order and duplicates, and the permitted grammar and bounds pass. Missing, wrongly typed, malformed and oversized claims fail as `invalid_token` 401 with no success audit, including when a required scope would otherwise pass. Well-formed scopes outside the catalog remain usable before expiry and fail at expiry. A valid token missing the required scope receives `insufficient_scope` 403.
+
+The 32,895-byte claim and its 32,896-byte rejection require direct suite evidence. Their signed Authorization headers exceed the fixture schema's 8,192-character per-value limit. The portable fixtures separately exercise the 128-entry and 256-byte token boundaries with smaller claims. Returned lists, machine credential classification, exact audit events and these full-claim boundaries retain the suite form. Issuance and refresh policy remain outside this receipt.
