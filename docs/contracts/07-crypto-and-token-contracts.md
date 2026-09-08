@@ -47,6 +47,8 @@ Incoming access-token verification requires `scope` to be a primitive string. Th
 
 Verification does not revalidate signed scopes against the current catalog: an otherwise valid token retains its well-formed scope list until expiry. Issuance and refresh continue to check their scope lists against the current catalog under §11. A valid token that lacks the required scope still receives `insufficient_scope` 403 under §8.3. For example, a signed `scope: "retired:read mcp:read retired:read"` retains all three entries after `retired:read` leaves the catalog; `scope: "mcp:read  retired:read"` instead fails as `invalid_token` because the separator repeats.
 
+The public `signAccessToken` helper snapshots its scope list and checks the §11 list grammar and bounds before reading the clock or importing the signing key. An invalid list is `invalid_scope` 400 and produces no token. The helper serializes that checked snapshot with the existing sorted scope format. It does not select or revalidate catalog membership; the grant use-cases retain that policy. This rule applies to interactive and machine access-token signing.
+
 **, cached verification key:** the public JWK is imported to an ES256 key **once** (memoized on the config) rather than per request. `verifyAccessToken` reuses the cached `CryptoKey`.
 
 ## 7.3 Authorization code (hashed, single-use)
