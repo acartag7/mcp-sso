@@ -113,3 +113,16 @@ This §19.7 receipt records direct helper options and the normalized-error compo
 Omitted options, empty options, and an undefined scope option advertise the catalog in its configured order. An explicit catalog retains that result. The challenge points at the resource origin even when the issuer differs and the resource has a nested path. The suite checks each documented error code with and without a description, a description without an error, an empty description, and quote/backslash escaping. `oauthErrorResponse` with an empty challenge uses the catalog; its no-challenge branch retains its own error channel.
 
 The HTTP fixture host supplies explicit catalog and error options, so it cannot make these direct calls. Explicit scope lists that differ from the catalog and an explicit empty scope list are outside this receipt. Empty catalogs are already rejected at boot under §5.
+
+### Explicit scope-override receipt
+
+This §19.7 receipt completes the documented challenge-option cases for §8.2. It is direct suite evidence, not portable fixture coverage.
+
+- Suite: repository challenge-default suite at `8319d13d852523dca5d4a26ca6cb4f0ee7b1f3ce`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/challenge-defaults.test.ts`.
+- Result: 40 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The command includes the preceding 15 default/error cases and 25 explicit-override cases. Empty, subset, reordered, non-catalog and duplicate lists preserve their exact advertised values. The empty list omits the scope parameter while retaining metadata and requested error fields. Every override is checked with an omitted error and each documented error code, plus the normalized 401 response path. The normalized helper's separate 403 channel is unchanged; protected-resource 403 challenges remain covered by the HTTP fixtures.
+
+The HTTP fixture host supplies the catalog explicitly and cannot choose these direct helper arguments. Existing fixture expectations and quoted sentences remain unchanged. Empty configuration catalogs still fail at boot under §5.
