@@ -127,3 +127,14 @@ This §19.7 receipt records incoming signed-scope observations for §7.2, §8.1,
 For interactive and machine credentials, the suite checks the direct verifier's returned scope list and authorization's exact audit events. Empty scopes, removed catalog entries, preserved order and duplicates, and the permitted grammar and bounds pass. Missing, wrongly typed, malformed and oversized claims fail as `invalid_token` 401 with no success audit, including when a required scope would otherwise pass. Well-formed scopes outside the catalog remain usable before expiry and fail at expiry. A valid token missing the required scope receives `insufficient_scope` 403.
 
 The 32,895-byte claim and its 32,896-byte rejection require direct suite evidence. Their signed Authorization headers exceed the fixture schema's 8,192-character per-value limit. The portable fixtures separately exercise the 128-entry and 256-byte token boundaries with smaller claims. Returned lists, machine credential classification, exact audit events and these full-claim boundaries retain the suite form. Issuance and refresh policy remain outside this receipt.
+
+## Public access-signing suite evidence
+
+This §19.7 receipt adds the public access-token signing sibling to the incoming-scope evidence for §7.2 and §11. Direct helper calls and their clock, key and list-read observations retain the suite form. They do not increase portable fixture coverage.
+
+- Suite: repository incoming access-scope suite at `e828022a6eacad91e6e7437f746e89c9e4cdf528`; implementation: mcp-sso 0.5.0 at that commit.
+- Run date: 2026-09-08. Environment: Node.js 24.3.0 on macOS; dependencies from the committed lockfile.
+- Command: `node --test --test-reporter=spec test/incoming-access-scopes.test.ts`.
+- Result: 138 tests passed, 0 failed, 0 cancelled, 0 skipped, 0 todo.
+
+The command includes the preceding 76 incoming-verifier cases and 62 public-signing cases. Both credential kinds round-trip empty, ordinary, removed-catalog, duplicate, punctuation and boundary scope lists through the real signer and verifier. Invalid list shapes, elements and bounds produce `invalid_scope` 400 before clock or key reads. A changing caller list proves that signing uses one length read and one selected-entry read without invoking its iterator. The existing sorted serialization and grant use-cases' catalog policy remain unchanged. These are access-token observations; consent-token signing is outside this receipt.
