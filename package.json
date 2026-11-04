@@ -117,7 +117,7 @@
     "jsonc-parser": "3.3.1",
     "mysql2": "3.22.5",
     "playwright-core": "1.62.1",
-    "re2js": "2.8.6",
+    "re2js": "2.8.7",
     "typescript": "6.0.3"
   },
   "peerDependencies": {
